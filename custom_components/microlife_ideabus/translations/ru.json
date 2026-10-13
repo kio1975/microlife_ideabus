@@ -7,6 +7,14 @@
         "data": {
           "mac": "Bluetooth MAC-адрес прибора",
           "device_type": "Тип медицинского устройства"
+        },
+        "data_description": {
+          "device_type": {
+            "blood_pressure": "Тонометр (B6 Connect / WatchBP)",
+            "watchbp_office": "Профессиональный тонометр (WatchBP Office)",
+            "thermometer": "Инфракрасный термометр",
+            "wbo_scale": "Диагностические весы (WBO3)"
+          }
         }
       }
     },
@@ -61,3 +69,4 @@
     }
   }
 }
+
