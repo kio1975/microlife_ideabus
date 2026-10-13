@@ -1,0 +1,10 @@
+{
+  "domain": "microlife_ideabus",
+  "name": "Microlife Ideabus",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "config_flow": true,
+  "dependencies": ["bluetooth"],
+  "codeowners": ["@kio1975"],
+  "version": "1.0.0"
+}
