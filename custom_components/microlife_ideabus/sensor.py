@@ -1,4 +1,4 @@
-"""Sensor platform core engine for Microlife Ideabus multi-device integration compliant with HA Core 2026.10."""
+"""Sensor platform core engine for Microlife Ideabus multi-device integration"""
 import asyncio
 import logging
 import copy
