@@ -1,0 +1,63 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Microlife IdeaBus",
+        "description": "Enter the Bluetooth MAC address of your Microlife medical device (Monitor, Scale, Thermometer, or Oximeter). Ensure the device is powered on and in pairing mode.",
+        "data": {
+          "mac": "Bluetooth MAC Address",
+          "device_type": "Medical Device Type"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This Microlife device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "device_type": "Medical Device Type"
+        }
+      }
+    }
+  },
+  "services": {
+    "tag_measurement": {
+      "name": "Assign User Tag to Record",
+      "description": "Overrides or assigns a custom user name tag to a historical record using a timestamp.",
+      "fields": {
+        "mac": { "name": "Device MAC Address", "description": "Target Bluetooth hardware address." },
+        "user_key": { "name": "Internal Device Profile", "description": "Select hardware memory profile slot (u1 or u2)." },
+        "datetime": { "name": "Record Timestamp", "description": "Exact time of the record from the archive attribute table." },
+        "user_tag": { "name": "Real User Name", "description": "Enter the name of the person who actually performed this measurement." }
+      }
+    },
+    "export_history": {
+      "name": "Export Historical Archive",
+      "description": "Filters measurements by user name and saves them into a CSV or TXT file inside www folder.",
+      "fields": {
+        "user_name": { "name": "Filter Name Tag", "description": "Target user name for data extraction." },
+        "format": { "name": "Document Format", "description": "Select target output extension format (TXT or CSV)." },
+        "start_date": { "name": "Limit Start Date", "description": "Optional lower bound date filter DD-MM-YYYY." },
+        "end_date": { "name": "Limit End Date", "description": "Optional upper bound date filter DD-MM-YYYY." }
+      }
+    },
+    "sync_time": {
+      "name": "Synchronize Clock",
+      "description": "Forces Home Assistant server system clock to overwrite the internal clock of Microlife device.",
+      "fields": {
+        "mac": { "name": "Device MAC Address", "description": "Targeted device hardware address string." }
+      }
+    },
+    "clear_history": {
+      "name": "Wipe Profile Storage",
+      "description": "Completely and irreversibly erases historical data of selected profile from physical memory.",
+      "fields": {
+        "mac": { "name": "Device MAC Address", "description": "Targeted hardware address." },
+        "user_key": { "name": "Target Profile Slot", "description": "Choose which profile storage block to clear." }
+      }
+    }
+  }
+}
