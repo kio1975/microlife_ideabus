@@ -1,0 +1,101 @@
+tag_measurement:
+  name: Assign User Tag to Record
+  description: Overrides or assigns a custom user name tag to a historical record using a timestamp.
+  fields:
+    mac:
+      name: Device MAC Address
+      description: Target Bluetooth hardware address (e.g., EF:06:40:CE:23:8E).
+      required: true
+      selector:
+        text:
+    user_key:
+      name: Internal Device Profile
+      description: Select hardware memory profile slot.
+      required: true
+      selector:
+        select:
+          options:
+            - label: "User 1 (u1)"
+              value: "u1"
+            - label: "User 2 (u2)"
+              value: "u2"
+    datetime:
+      name: Record Timestamp
+      description: Exact time of the record from the archive attribute table (e.g., 2026-10-09 18:22).
+      required: true
+      selector:
+        text:
+    user_tag:
+      name: Real User Name
+      description: Enter the name of the person who actually performed this measurement.
+      required: true
+      selector:
+        text:
+
+export_history:
+  name: Export Historical Archive
+  description: Filters measurements by user name and saves them into a CSV or TXT file inside www folder.
+  fields:
+    user_name:
+      name: Filter Name Tag
+      description: Target user name for data extraction.
+      required: true
+      selector:
+        text:
+    format:
+      name: Document Format
+      description: Select target output extension format.
+      required: false
+      default: "txt"
+      selector:
+        select:
+          options:
+            - label: "Text File (TXT)"
+              value: "txt"
+            - label: "Spreadsheet Data (CSV)"
+              value: "csv"
+    start_date:
+      name: Limit Start Date
+      description: Optional lower bound date filter DD-MM-YYYY (e.g., 01-10-2026).
+      required: false
+      selector:
+        text:
+    end_date:
+      name: Limit End Date
+      description: Optional upper bound date filter DD-MM-YYYY (e.g., 09-10-2026).
+      required: false
+      selector:
+        text:
+
+sync_time:
+  name: Synchronize Clock
+  description: Forces Home Assistant server system clock to overwrite the internal clock of Microlife device.
+  fields:
+    mac:
+      name: Device MAC Address
+      description: Targeted device hardware address string.
+      required: true
+      selector:
+        text:
+
+clear_history:
+  name: Wipe Profile Storage
+  description: Completely and irreversibly erases historical data of selected profile from physical memory.
+  fields:
+    mac:
+      name: Device MAC Address
+      description: Targeted hardware address.
+      required: true
+      selector:
+        text:
+    user_key:
+      name: Target Profile Slot
+      description: Choose which profile storage block to clear.
+      required: true
+      selector:
+        select:
+          options:
+            - label: "User 1 (u1)"
+              value: "u1"
+            - label: "User 2 (u2)"
+              value: "u2"
