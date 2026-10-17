@@ -63,8 +63,36 @@ def classify_ble_error(err: Exception) -> str:
 
 async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac: str, device_type: str, service_info, state_lock: dict):
     """End-to-end communication session worker optimized for multi-device matrix architecture."""
-    ble_device = async_ble_device_from_address(hass, mac, connectable=True)
-    
+
+    ble_device = async_ble_device_from_address(
+        hass,
+        mac,
+        connectable=True,
+    )
+
+    entry_context = hass.data.setdefault(
+        DOMAIN,
+        {}
+    ).setdefault(
+        entry.entry_id,
+        {}
+    )
+
+    ble_error_stats = entry_context.setdefault(
+        "ble_error_stats",
+        {
+            "authentication_failed": 0,
+            "service_discovery_failed": 0,
+            "connection_canceled": 0,
+            "not_connected": 0,
+            "stack_busy": 0,
+            "connect_failed": 0,
+            "device_disconnected": 0,
+            "timeout": 0,
+            "unknown": 0,
+        },
+    )
+
     if not ble_device:
         _LOGGER.error("[Microlife Search] Critical: Device instance missing from cache for MAC: %s.", mac)
         state_lock["is_connecting"] = False
@@ -195,6 +223,15 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
     except (BleakConnectionError, Exception) as err:
 
         error_type = classify_ble_error(err)
+
+        ble_error_stats[error_type] = (
+            ble_error_stats.get(error_type, 0) + 1
+        )
+
+        _LOGGER.warning(
+            "[Microlife Worker] BLE error statistics: %s",
+            ble_error_stats,
+        )
 
         _LOGGER.error(
             "[Microlife Worker] BLE session failed. "
