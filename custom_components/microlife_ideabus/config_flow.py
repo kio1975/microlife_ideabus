@@ -1,14 +1,14 @@
-"""Config flow for Microlife Ideabus integration bypassing explicit client pairing loops."""
-import voluptuous as vol
+"""Config flow for Microlife Ideabus integration supporting native interactive 6-digit bonding."""
 import logging
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import async_ble_device_from_address
 
 from .const import DOMAIN
+from .pairing_helper import MicrolifePairingHelper
 
 _LOGGER = logging.getLogger(__name__)
 
-# Options for multi-device compatibility
 DEVICE_TYPES = {
     "blood_pressure": "Blood Pressure Monitor (B6 / WatchBP)",
     "watchbp_office": "WatchBP Office (Clinical ABPM)",
@@ -16,43 +16,113 @@ DEVICE_TYPES = {
     "wbo_scale": "Body Composition Scale (WBO3)"
 }
 
+
 class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Microlife Ideabus."""
     VERSION = 1
 
+    def __init__(self):
+        """Initialize the flow context store."""
+        self.mac_address = None
+        self.device_type = None
+        self.helper = None
+
     async def async_step_user(self, user_input=None):
-        """Handle the initial step via graphical UI layout without triggering hardware blocks."""
+        """Шаг 1: Инициация подключения и запуск фонового демона BlueZ."""
         errors = {}
 
         if user_input is not None:
-            mac_address = user_input["mac"].upper().strip()
-            device_type = user_input["device_type"]
+            self.mac_address = user_input["mac"].upper().strip()
+            self.device_type = user_input["device_type"]
             
-            _LOGGER.warning("[Microlife Flow] UI Configuration submitted for MAC: %s", mac_address)
+            _LOGGER.info("[Microlife Flow] Step User submitted for MAC: %s", self.mac_address)
             
-            # Проверяем, видит ли ядро Home Assistant рекламу (ADV-пакеты) от прибора по воздуху
-            ble_device = async_ble_device_from_address(self.hass, mac_address, connectable=True)
-            
+            ble_device = async_ble_device_from_address(self.hass, self.mac_address, connectable=True)
             if not ble_device:
                 _LOGGER.warning("[Microlife Flow] Target device not discovered in BLE air scanning cache.")
                 errors["base"] = "cannot_connect"
-            else:
-                # FIXED: Полностью убрали открытие сокета BleakClient.
-                # Интеграция мгновенно сохраняет запись, передавая управление рабочему движку sensor.py
-                _LOGGER.warning("[Microlife Flow] Device verified in BLE air cache. Registering integration entry...")
-                return self.async_create_entry(
-                    title=f"Microlife {mac_address}",
-                    data={"mac": mac_address, "device_type": device_type}
-                )
+                return self._show_user_form(user_input, errors)
 
-        # UI form structure using voluptuous schemas
+            # Initialize Bluetooth pairing helper
+            self.helper = MicrolifePairingHelper(self.mac_address)
+
+            # Always perform a clean bond recovery workflow.
+            # This prevents stale BlueZ pairing keys from being reused
+            # after integration reinstallation or failed pairing attempts.
+            # Workflow:
+            # remove -> pair -> PIN -> trust
+            success = await self.helper.repair_pairing()
+            if not success:
+                errors["base"] = "cannot_connect"
+                return self._show_user_form(user_input, errors)
+
+            # Переводим пользователя на шаг ввода PIN-кода
+            return await self.async_step_pin()
+
+        return self._show_user_form(user_input, errors)
+
+    async def async_step_pin(self, user_input=None):
+        """Шаг 2: Окно ввода 6-значного PIN-кода и сквозное удержание линка."""
+        errors = {}
+
+        if user_input is not None:
+            pin_code = user_input["pin"].strip()
+            
+            if not pin_code.isdigit() or len(pin_code) != 6:
+                errors["base"] = "invalid_pin_format"
+                return self._show_pin_form(errors)
+
+            _LOGGER.info("[Microlife Flow] Submitting 6-digit passkey to authorized BlueZ agent...")
+            
+            if not self.helper:
+                errors["base"] = "pairing_failed"
+                return self._show_pin_form(errors)
+
+            # Передаем введенный PIN в живой тоннель и запрашиваем буфер истории
+            success = await self.helper.submit_pin_and_fetch_matrix(pin_code)
+            
+            if not success:
+                errors["base"] = "pairing_failed"
+                return self._show_pin_form(errors)
+
+            # Создаем уникальный ID интеграции в базе Home Assistant
+            await self.async_set_unique_id(self.mac_address)
+            self._abort_if_unique_id_configured()
+
+            _LOGGER.info("[Microlife Flow] Provisioning completed successfully. Creating config entry.")
+            return self.async_create_entry(
+                title=f"Microlife {self.mac_address}",
+                data={"mac": self.mac_address, "device_type": self.device_type}
+            )
+
+        return self._show_pin_form(errors)
+
+    def _show_user_form(self, user_input, errors):
+        """Render UI voluptuous schemas input form layout."""
+        default_mac = "EF:06:40:CE:23:8E"
+        default_type = "blood_pressure"
+
+        if user_input is not None:
+            default_mac = user_input.get("mac", default_mac)
+            default_type = user_input.get("device_type", default_type)
+
         data_schema = vol.Schema({
-            vol.Required("mac", default="EF:06:40:CE:23:8E"): str,
-            vol.Required("device_type", default="blood_pressure"): vol.In(DEVICE_TYPES)
+            vol.Required("mac", default=default_mac): str,
+            vol.Required("device_type", default=default_type): vol.In(DEVICE_TYPES)
         })
 
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
+            errors=errors
+        )
+
+    def _show_pin_form(self, errors):
+        """Render UI voluptuous schemas input form layout."""
+        return self.async_show_form(
+            step_id="pin",
+            data_schema=vol.Schema({
+                vol.Required("pin"): str
+            }),
             errors=errors
         )
