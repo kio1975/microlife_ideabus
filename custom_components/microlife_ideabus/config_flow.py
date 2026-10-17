@@ -3,6 +3,7 @@ import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import async_ble_device_from_address
+from homeassistant.core import callback
 
 from .const import DOMAIN
 from .pairing_helper import MicrolifePairingHelper
@@ -20,7 +21,12 @@ DEVICE_TYPES = {
 class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Microlife Ideabus."""
     VERSION = 1
-
+    
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return MicrolifeOptionsFlowHandler(config_entry)
+    
     def __init__(self):
         """Initialize the flow context store."""
         self.mac_address = None
@@ -144,4 +150,46 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required("pin"): str
             }),
             errors=errors
+        )
+class MicrolifeOptionsFlowHandler(config_entries.OptionsFlow):
+    """Microlife options flow."""
+
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        """Manage integration options."""
+
+        if user_input is not None:
+            return self.async_create_entry(
+                title="",
+                data=user_input,
+            )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "profile1_name",
+                        default=self.config_entry.options.get(
+                            "profile1_name",
+                            self.config_entry.data.get(
+                                "profile1_name",
+                                "Profile 1",
+                            ),
+                        ),
+                    ): str,
+                    vol.Required(
+                        "profile2_name",
+                        default=self.config_entry.options.get(
+                            "profile2_name",
+                            self.config_entry.data.get(
+                                "profile2_name",
+                                "Profile 2",
+                            ),
+                        ),
+                    ): str,
+                }
+            ),
         )
