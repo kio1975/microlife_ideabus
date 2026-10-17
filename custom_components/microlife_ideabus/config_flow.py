@@ -25,16 +25,27 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the flow context store."""
         self.mac_address = None
         self.device_type = None
+        self.profile1_name = None
+        self.profile2_name = None
         self.helper = None
 
     async def async_step_user(self, user_input=None):
-        """Шаг 1: Инициация подключения и запуск фонового демона BlueZ."""
+        """Step 1: Initialize Bluetooth pairing workflow."""
         errors = {}
 
         if user_input is not None:
             self.mac_address = user_input["mac"].upper().strip()
             self.device_type = user_input["device_type"]
-            
+            self.profile1_name = user_input.get(
+                "profile1_name",
+                "Profile 1",
+            ).strip()
+
+            self.profile2_name = user_input.get(
+                "profile2_name",
+                "Profile 2",
+            ).strip()
+
             _LOGGER.info("[Microlife Flow] Step User submitted for MAC: %s", self.mac_address)
             
             ble_device = async_ble_device_from_address(self.hass, self.mac_address, connectable=True)
@@ -56,13 +67,13 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
                 return self._show_user_form(user_input, errors)
 
-            # Переводим пользователя на шаг ввода PIN-кода
+            # Proceed to the PIN verification step
             return await self.async_step_pin()
 
         return self._show_user_form(user_input, errors)
 
     async def async_step_pin(self, user_input=None):
-        """Шаг 2: Окно ввода 6-значного PIN-кода и сквозное удержание линка."""
+        """Step 2: Submit the 6-digit pairing PIN."""
         errors = {}
 
         if user_input is not None:
@@ -78,22 +89,28 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "pairing_failed"
                 return self._show_pin_form(errors)
 
-            # Передаем введенный PIN в живой тоннель и запрашиваем буфер истории
+            # Submit the entered PIN to the active pairing session
             success = await self.helper.submit_pin_and_fetch_matrix(pin_code)
             
             if not success:
                 errors["base"] = "pairing_failed"
                 return self._show_pin_form(errors)
 
-            # Создаем уникальный ID интеграции в базе Home Assistant
+            # Create a unique Home Assistant config entry identifier
             await self.async_set_unique_id(self.mac_address)
             self._abort_if_unique_id_configured()
 
             _LOGGER.info("[Microlife Flow] Provisioning completed successfully. Creating config entry.")
             return self.async_create_entry(
-                title=f"Microlife {self.mac_address}",
-                data={"mac": self.mac_address, "device_type": self.device_type}
-            )
+            title=f"Microlife {self.mac_address}",
+            data={
+                "mac": self.mac_address,
+                "device_type": self.device_type,
+                "profile1_name": self.profile1_name,
+                "profile2_name": self.profile2_name,
+            },
+)
+
 
         return self._show_pin_form(errors)
 
@@ -108,7 +125,9 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema({
             vol.Required("mac", default=default_mac): str,
-            vol.Required("device_type", default=default_type): vol.In(DEVICE_TYPES)
+            vol.Required("device_type", default=default_type): vol.In(DEVICE_TYPES),
+            vol.Required("profile1_name", default="Profile 1"): str,
+            vol.Required("profile2_name", default="Profile 2"): str,
         })
 
         return self.async_show_form(
