@@ -1,113 +1,127 @@
 """Dashboard sensor state dispatcher using isolated user matrix decoding pipelines with raw indexing."""
 import logging
-from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
 
-def parse_ideabus_matrix(raw_bytes) -> list:
-    """Your gold-standard matrix parser sliding by 1 byte window frame on pattern mismatch."""
-    data = bytes(raw_bytes)
-    idx = data.find(b"\x4d\x3a")
-    if idx == -1:
-        return []
-
-    start_pos = idx + 4
-    payload_len = int.from_bytes(data[idx+2:idx+4], byteorder='big')
-    end_pos = start_pos + payload_len
-    if end_pos > len(data):
-        end_pos = len(data)
-
-    records = []
-    i = start_pos
-    while i + 10 <= end_pos:
-        block = data[i:i+10]
-        
-        # Mapped to single-byte integer slices to prevent formatting crashes
-        sys, dia, pulse, year, month, day, hour, min_ = block[0], block[1], block[2], block[3], block[4], block[5], block[6], block[7]
-
-        if sys == 0 or dia == 0 or sys == 0xFF:
-            i += 1
-            continue
-
-        is_no_date = (year == 0x11 and month == 0x00 and day == 0x00)
-        is_valid_date = (year >= 0 and 1 <= month <= 12 and 1 <= day <= 31 and hour <= 23 and min_ <= 59)
-        if not (is_no_date or is_valid_date):
-            i += 1
-            continue
-        if not (40 <= dia <= 130 and 70 <= sys <= 220 and 35 <= pulse <= 180):
-            i += 1
-            continue
-
-        try:
-            if is_no_date:
-                dt_object = datetime.now().astimezone()
-                sort_key = datetime.min
-            else:
-                sort_key = datetime(2000 + year, month, day, hour, min_)
-                dt_object = sort_key.astimezone()
-        except ValueError:
-            i += 1
-            continue
-
-        records.append({
-            "sys": sys, "dia": dia, "pulse": pulse,
-            "time_obj": dt_object, "time_str": dt_object.strftime("%Y-%m-%d %H:%M"),
-            "_sort": sort_key
-        })
-        i += 10
-    return records
-
-
-def update_bpm_user1(sensors, data_u1):
-    """Process and commit data for User 1."""
-    records = parse_ideabus_matrix(data_u1)
+def update_bpm_user1(sensors, records):
+    """Process and commit data for User 1 (Blood Pressure)."""
     if not records: return
-    records.sort(key=lambda x: x["_sort"], reverse=True)
-    newest = records[0]
+    # Filter records belonging to blood pressure before processing
+    bp_records = [r for r in records if r.get("type") == "blood_pressure"]
+    if not bp_records: return
+
+    bp_records.sort(key=lambda x: x.get("time_obj"), reverse=True)
+    newest = bp_records[0]
     ts = newest["time_obj"].isoformat()
     
-    _LOGGER.info(f"[Microlife UI Dispatch] Committing User 1: SYS={newest['sys']}, DIA={newest['dia']}")
+    _LOGGER.info("[Microlife UI Dispatch] Committing User 1: SYS=%s, DIA=%s", newest['sys'], newest['dia'])
     sensors["u1"]["systolic"].update_state(newest["sys"], ts)
     sensors["u1"]["diastolic"].update_state(newest["dia"], ts)
     sensors["u1"]["pulse"].update_state(newest["pulse"], ts)
-    sensors["u1"]["time"].update_state(newest["time_obj"], ts)
     
-    hist_list = [{"datetime": r["time_str"], "systolic": r["sys"], "diastolic": r["dia"], "pulse": r["pulse"]} for r in records]
+    # ИСПРАВЛЕНО: Передаем строковый ts вместо живого объекта datetime,
+    # чтобы исключить TypeError краш JSON-сериализатора в ядре HA Core.
+    sensors["u1"]["time"].update_state(ts, ts)
+    
+    hist_list = [{
+        "device_user": "u1",
+        "datetime": r["time_str"], 
+        "systolic": r["sys"], 
+        "diastolic": r["dia"], 
+        "pulse": r["pulse"],
+        "arrhythmia": r.get("arrhythmia", False),
+        "afib": r.get("afib", False),
+        "cuff_status": r.get("cuff_status", "OK")
+    } for r in bp_records]
     sensors["u1"]["history"].update_history_state(len(hist_list), hist_list)
 
 
-def update_bpm_user2(sensors, data_u2):
-    """Process and commit data for User 2."""
-    records = parse_ideabus_matrix(data_u2)
+def update_bpm_user2(sensors, records):
+    """Process and commit data for User 2 (Blood Pressure)."""
     if not records: return
-    records.sort(key=lambda x: x["_sort"], reverse=True)
-    newest = records[0]
+    bp_records = [r for r in records if r.get("type") == "blood_pressure"]
+    if not bp_records: return
+
+    bp_records.sort(key=lambda x: x.get("time_obj"), reverse=True)
+    newest = bp_records[0]
     ts = newest["time_obj"].isoformat()
     
-    _LOGGER.info(f"[Microlife UI Dispatch] Committing User 2: SYS={newest['sys']}, DIA=%d", newest["sys"], newest["dia"])
+    _LOGGER.info("[Microlife UI Dispatch] Committing User 2: SYS=%s, DIA=%s", newest['sys'], newest['dia'])
     sensors["u2"]["systolic"].update_state(newest["sys"], ts)
     sensors["u2"]["diastolic"].update_state(newest["dia"], ts)
     sensors["u2"]["pulse"].update_state(newest["pulse"], ts)
-    sensors["u2"]["time"].update_state(newest["time_obj"], ts)
     
-    hist_list = [{"datetime": r["time_str"], "systolic": r["sys"], "diastolic": r["dia"], "pulse": r["pulse"]} for r in records]
+    # ИСПРАВЛЕНО: Фикс типизации времени для Пользователя 2
+    sensors["u2"]["time"].update_state(ts, ts)
+    
+    hist_list = [{
+        "device_user": "u2",
+        "datetime": r["time_str"], 
+        "systolic": r["sys"], 
+        "diastolic": r["dia"], 
+        "pulse": r["pulse"],
+        "arrhythmia": r.get("arrhythmia", False),
+        "afib": r.get("afib", False),
+        "cuff_status": r.get("cuff_status", "OK")
+    } for r in bp_records]
     sensors["u2"]["history"].update_history_state(len(hist_list), hist_list)
 
 
-# --- MULTI-DEVICE EXTENSION PARSERS MAPPED FROM SDK ---
-def update_thermo_sensors(user_sensors, raw_bytes):
+def update_thermo_sensors(user_sensors, records):
     """Adaptive parser block for Infrared Thermometers."""
-    data = bytes(raw_bytes)
-    idx = data.find(b"\x4d\x2e") # T: header signature
-    if idx == -1: return
-    # Thermometer processing layout maps here...
+    if not records: return
+    temp_records = [r for r in records if r.get("type") == "thermometer"]
+    if not temp_records: return
 
-def update_oximeter_sensors(user_sensors, raw_bytes):
+    temp_records.sort(key=lambda x: x.get("time_obj"), reverse=True)
+    newest = temp_records[0]
+    ts = newest["time_obj"].isoformat()
+    
+    _LOGGER.info("[Microlife UI Dispatch] Committing Thermometer: TEMP=%s", newest['temperature'])
+    user_sensors["temperature"].update_state(newest['temperature'], ts)
+
+
+def update_oximeter_sensors(user_sensors, records):
     """Adaptive real-time aggregator for Pulse Oximeters."""
-    data = bytes(raw_bytes)
-    # Oximeter processing layout maps here...
+    if not records: return
+    oxy_records = [r for r in records if r.get("type") == "oximeter"]
+    if not oxy_records: return
 
-def update_scale_sensors(user_sensors, raw_bytes):
+    oxy_records.sort(key=lambda x: x.get("time_obj"), reverse=True)
+    newest = oxy_records[0]
+    ts = newest["time_obj"].isoformat()
+    
+    _LOGGER.info("[Microlife UI Dispatch] Committing Oximeter: SpO2=%s, Pulse=%s", newest['spo2'], newest['pulse'])
+    user_sensors["spo2"].update_state(newest["spo2"], ts)
+    user_sensors["pulse"].update_state(newest["pulse"], ts)
+    user_sensors["pi"].update_state(newest["perf_index"], ts)
+
+
+def update_scale_sensors(user_sensors, records):
     """Adaptive matrix parser for Body Composition WBO Scales."""
-    data = bytes(raw_bytes)
-    # Scale processing layout maps here...
+    if not records: return
+    scale_records = [r for r in records if r.get("type") == "wbo_scale"]
+    if not scale_records: return
+
+    scale_records.sort(key=lambda x: x.get("time_obj"), reverse=True)
+    newest = scale_records[0]
+    ts = newest["time_obj"].isoformat()
+    
+    _LOGGER.info("[Microlife UI Dispatch] Committing Scales: Weight=%s", newest['weight'])
+    user_sensors["weight"].update_state(newest["weight"], ts)
+    user_sensors["fat"].update_state(newest["fat"], ts)
+    user_sensors["water"].update_state(newest["water"], ts)
+    user_sensors["muscle"].update_state(newest["muscle"], ts)
+    
+    hist_list = [{
+        "datetime": r["time_str"], 
+        "weight": r["weight"], 
+        "fat": r["fat"], 
+        "water": r["water"],
+        "muscle": r["muscle"],
+        "bone": r.get("bone"),
+        "viscera_fat": r.get("viscera_fat"),
+        "bmi": r.get("bmi"),
+        "bmr_kcal": r.get("bmr_kcal")
+    } for r in scale_records]
+    user_sensors["history"].update_history_state(len(hist_list), hist_list)
