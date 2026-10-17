@@ -2,7 +2,6 @@
 import os
 import csv
 import json
-import copy
 import logging
 from datetime import datetime
 import voluptuous as vol
@@ -10,7 +9,8 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, WRITE_UUID, calc_checksum_1byte
+from .const import DOMAIN, calc_checksum_1byte
+from .pairing_helper import MicrolifePairingHelper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,6 +19,9 @@ SERVICE_CLEAR_SCHEMA = vol.Schema({
     vol.Optional("user_key", default="u1"): vol.In(["u1", "u2"]),
 })
 
+SERVICE_REPAIR_SCHEMA = vol.Schema({
+    vol.Required("mac"): cv.string,
+})
 
 def register_microlife_services(hass: HomeAssistant, sensors: dict):
     """Register custom services for handling medical archives."""
@@ -51,46 +54,68 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
                 json.dump(mapping_data, f, ensure_ascii=False, indent=2)
                 
         await hass.async_add_executor_job(update_mapping_sync)
-        _LOGGER.info(f"[Microlife] Measurement from {target_time} on device {mac} forced to user: {new_tag}")
+        _LOGGER.info("[Microlife] Record from %s on device %s forced to user: %s", target_time, mac, new_tag)
 
-        for user_data in sensors.values():
-            if "history" in user_data and user_data["history"]._mac == mac:
-                if hasattr(user_data["history"], "async_force_update_from_cache"):
-                    hass.async_create_task(user_data["history"].async_force_update_from_cache())
+        for group in sensors.values():
+            for entity in group.values():
+                if getattr(entity, "_mac", "") == mac:
+                    entity.async_write_ha_state()
 
     async def handle_sync_time(call: ServiceCall):
-        """Synchronize device system clock."""
+        """Synchronize device system clock via command queue."""
         mac = call.data.get("mac").upper()
-        target_sensor = None
-        for group in sensors.values():
-            if "history" in group and group["history"]._mac == mac:
-                target_sensor = group["history"]
+        
+        target_entry = None
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.data.get("mac", "").upper() == mac:
+                target_entry = entry
                 break
-        if not target_sensor:
+                
+        if not target_entry:
+            _LOGGER.error("Device configuration for MAC %s not found", mac)
             return
+
+        # ИСПРАВЛЕНО: Безопасное извлечение очереди из глобального хранилища hass.data
+        entry_context = hass.data.get(DOMAIN, {}).get(target_entry.entry_id)
+        if not entry_context or "cmd_queue" not in entry_context:
+            _LOGGER.error("Active execution queue context missing for MAC %s", mac)
+            return
+
         now = datetime.now()
         year_short = now.year % 100
         time_payload = bytearray([0x4D, 0x3A, 0x00, 0x0F, 0x0D, year_short, now.month, now.day, now.hour, now.minute, now.second])
         time_payload.append(calc_checksum_1byte(time_payload))
-        if hasattr(target_sensor, "async_gatt_write"):
-            await target_sensor.async_gatt_write(WRITE_UUID, bytes(time_payload))
+        
+        entry_context["cmd_queue"].append(bytes(time_payload))
+        _LOGGER.info("[Microlife] Time synchronization frame pushed into session execution queue for %s", mac)
 
     async def handle_clear_history(call: ServiceCall):
-        """Completely erase memory storage on the physical device."""
+        """Completely erase memory storage on the physical device via command queue."""
         mac = call.data.get("mac").upper()
         user_key = call.data.get("user_key")
         user_no = 0x01 if user_key == "u1" else 0x02
-        target_sensor = None
-        for key, group in sensors.items():
-            if "history" in group and group["history"]._mac == mac and key == user_key:
-                target_sensor = group["history"]
+        
+        target_entry = None
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.data.get("mac", "").upper() == mac:
+                target_entry = entry
                 break
-        if not target_sensor:
+                
+        if not target_entry:
+            _LOGGER.error("Device configuration for MAC %s not found", mac)
             return
+
+        # ИСПРАВЛЕНО: Извлечение очереди из глобального хранилища hass.data
+        entry_context = hass.data.get(DOMAIN, {}).get(target_entry.entry_id)
+        if not entry_context or "cmd_queue" not in entry_context:
+            _LOGGER.error("Active execution queue context missing for MAC %s", mac)
+            return
+
         clear_payload = bytearray([0x4D, 0x3A, 0x00, 0x0A, 0x03, user_no])
         clear_payload.append(calc_checksum_1byte(clear_payload))
-        if hasattr(target_sensor, "async_gatt_write"):
-            await target_sensor.async_gatt_write(WRITE_UUID, bytes(clear_payload))
+        
+        entry_context["cmd_queue"].append(bytes(clear_payload))
+        _LOGGER.warning("[Microlife] Memory wipe frame for profile %s pushed into queue for %s", user_key, mac)
 
     async def handle_export_history(call):
         """Export parsed and filtered diagnostic historical data to a file."""
@@ -106,10 +131,12 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
             end_dt = datetime.strptime(end_date_str, "%d-%m-%Y") if end_date_str else None
         except ValueError:
             return
+            
         all_measurements = []
         for u_data in sensors.values():
             if "history" in u_data:
-                all_measurements.extend(u_data["history"].extra_state_attributes.get("measurements", []))
+                all_measurements.extend(u_data["history"].extra_state_attributes.get("records", []))
+                
         filtered = []
         for m in all_measurements:
             m_tag = m.get("user_tag", "unknown").lower()
@@ -134,20 +161,80 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
             if export_format == "csv":
                 with open(file_path, mode="w", encoding="utf-8", newline="") as f:
                     writer = csv.writer(f, delimiter=";")
-                    writer.writerow(["Timestamp", "SYS", "DIA", "Pulse", "Arrhythmia", "AFIB", "Cuff", "User"])
+                    writer.writerow(["Timestamp", "SYS", "DIA", "Pulse", "User"])
                     for row in filtered:
-                        writer.writerow([row.get("datetime"), row.get("systolic"), row.get("diastolic"), row.get("pulse"), "Yes" if row.get("arrhythmia") else "No", "Yes" if row.get("afib") else "No", row.get("cuff_status", "OK"), row.get("user_tag", "unknown")])
+                        writer.writerow([row.get("datetime"), row.get("systolic"), row.get("diastolic"), row.get("pulse"), row.get("user_tag", "unknown")])
             else:
                 with open(file_path, mode="w", encoding="utf-8") as f:
                     f.write(f"Report for user: {target_user}\n")
                     for row in filtered:
-                        f.write(f"{row.get('datetime')} | SYS: {row.get('systolic')} | DIA: {row.get('diastolic')} | Pulse: {row.get('pulse')} | Tag: {row.get('user_tag', 'unknown')}\n")
+                        f.write(f"{row.get('datetime')} | SYS: {row.get('systolic')} | DIA: {row.get('diastolic')} | Pulse: {row.get('pulse')}\n")
             return generated_filename
 
         filename = await hass.async_add_executor_job(save_file_to_disk)
-        await hass.services.async_call("persistent_notification", "create", {"title": "📊 Microlife Export", "message": f"Export complete. [/local/exports/{filename}]"})
+        await hass.services.async_call("persistent_notification", "create", {"title": "📊 Microlife Export", "message": f"Export complete. File location: [/local/exports/{filename}]"})
+
+    async def handle_repair_bluetooth(call: ServiceCall):
+        """Start Bluetooth bond repair workflow."""
+
+        mac = call.data.get("mac", "").upper().strip()
+
+        if not mac:
+            _LOGGER.error(
+                "[Microlife Repair] MAC address not supplied."
+            )
+            return
+
+        _LOGGER.warning(
+            "[Microlife Repair] Starting Bluetooth repair workflow for %s",
+            mac,
+        )
+
+        helper = MicrolifePairingHelper(mac)
+
+        success = await helper.repair_pairing()
+
+        if success:
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "Microlife Bluetooth Repair",
+                    "message": (
+                        "Repair workflow started successfully. "
+                        "Complete pairing by entering the PIN shown on the device."
+                    ),
+                },
+            )
+
+            _LOGGER.info(
+                "[Microlife Repair] Repair workflow started for %s",
+                mac,
+            )
+        else:
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "Microlife Bluetooth Repair",
+                    "message": (
+                        "Unable to start Bluetooth repair workflow."
+                    ),
+                },
+            )
+
+            _LOGGER.error(
+                "[Microlife Repair] Failed to start repair workflow for %s",
+                mac,
+            )
 
     hass.services.async_register(DOMAIN, "tag_measurement", handle_tag_measurement)
     hass.services.async_register(DOMAIN, "export_history", handle_export_history)
     hass.services.async_register(DOMAIN, "sync_time", handle_sync_time, schema=SERVICE_CLEAR_SCHEMA)
     hass.services.async_register(DOMAIN, "clear_history", handle_clear_history, schema=SERVICE_CLEAR_SCHEMA)
+    hass.services.async_register(
+        DOMAIN,
+        "repair_bluetooth",
+        handle_repair_bluetooth,
+        schema=SERVICE_REPAIR_SCHEMA,
+    )
