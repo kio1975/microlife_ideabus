@@ -13,7 +13,7 @@ from .device import get_microlife_device_info
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> bool:
-    """Настройка расширенной матрицы сенсоров тонометра Microlife."""
+    """Set up the Microlife sensor platform."""
     mac_address = entry.data.get("mac").upper().strip()
     device_type = entry.data.get("device_type")
     
@@ -24,8 +24,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         _LOGGER.error("[Microlife Core] Integration context missing from hass.data during sensor setup!")
         return False
 
-        # Device association is now performed exclusively through the Bluetooth identifier.
-
+    # Device association is now performed exclusively through the Bluetooth identifier.
     device_info = get_microlife_device_info(
         mac_address,
         device_type,
@@ -33,14 +32,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = []
     sensors_map = {"u1": {}, "u2": {}}
 
-    profile1_name = entry.data.get(
+    profile1_name = entry.options.get(
         "profile1_name",
-        "Profile 1",
+        entry.data.get("profile1_name", "Profile 1"),
     )
 
-    profile2_name = entry.data.get(
+    profile2_name = entry.options.get(
         "profile2_name",
-        "Profile 2",
+        entry.data.get("profile2_name", "Profile 2"),
     )
 
     for user in ["u1", "u2"]:
