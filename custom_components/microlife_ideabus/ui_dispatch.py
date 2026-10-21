@@ -1,11 +1,50 @@
 """Dashboard sensor state dispatcher using isolated user matrix decoding pipelines with raw indexing."""
 import logging
+import os
+import json
+from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
-def update_bpm_user1(sensors, records):
-    """Process and commit data for User 1 (Blood Pressure)."""
-    if not records: return
+def load_measurement_mapping(hass):
+    """Load measurement user tags."""
+
+    mapping_file = hass.config.path(
+        ".microlife_mapping.json"
+    )
+
+    if not os.path.exists(mapping_file):
+        return {}
+
+    try:
+        with open(
+            mapping_file,
+            "r",
+            encoding="utf-8",
+        ) as f:
+            return json.load(f)
+
+    except Exception as err:
+        _LOGGER.warning(
+            "Failed to load .microlife_mapping.json: %s",
+            err,
+        )
+    return {}
+
+def update_bpm_user1(hass, mac, sensors, records):
+
+    _LOGGER.error("DEBUG sensors type=%s", type(sensors))
+    _LOGGER.error("DEBUG sensors=%r", sensors)
+
+    if "u1" not in sensors:
+        _LOGGER.error(
+            "DEBUG u1 missing. Available keys=%s",
+            list(sensors.keys()) if hasattr(sensors, "keys") else "NO_KEYS"
+        )
+        return
+
+    if not records:
+        return
     # Filter records belonging to blood pressure before processing
     bp_records = [r for r in records if r.get("type") == "blood_pressure"]
     if not bp_records: return
@@ -25,20 +64,51 @@ def update_bpm_user1(sensors, records):
     
     hist_list = [{
         "device_user": "u1",
-        "datetime": r["time_str"], 
-        "systolic": r["sys"], 
-        "diastolic": r["dia"], 
+        "datetime": r["time_str"],
+        "systolic": r["sys"],
+        "diastolic": r["dia"],
         "pulse": r["pulse"],
         "arrhythmia": r.get("arrhythmia", False),
+        "ihb": r.get("ihb", False),
         "afib": r.get("afib", False),
-        "cuff_status": r.get("cuff_status", "OK")
+        "mam": r.get("mam", 0),
+        "cuff_ok": r.get("cuff_ok", True),
     } for r in bp_records]
+
+    mapping_data = load_measurement_mapping(
+        hass
+    )
+
+    for item in hist_list:
+
+        record_key = (
+            f"{mac}_{item['datetime']}"
+        )
+
+        mapping = mapping_data.get(
+            record_key
+        )
+
+        if mapping:
+            item["user_tag"] = (
+                mapping.get(
+                    "assigned_user_tag"
+                )
+            )
     sensors["u1"]["history"].update_history_state(len(hist_list), hist_list)
 
 
-def update_bpm_user2(sensors, records):
-    """Process and commit data for User 2 (Blood Pressure)."""
-    if not records: return
+def update_bpm_user2(hass, mac, sensors, records):
+
+    if "u2" not in sensors:
+        _LOGGER.error(
+            "DEBUG u2 missing. Available keys=%s",
+            list(sensors.keys()) if hasattr(sensors, "keys") else "NO_KEYS"
+        )
+        return
+
+    if not records:
+        return
     bp_records = [r for r in records if r.get("type") == "blood_pressure"]
     if not bp_records: return
 
@@ -56,14 +126,36 @@ def update_bpm_user2(sensors, records):
     
     hist_list = [{
         "device_user": "u2",
-        "datetime": r["time_str"], 
-        "systolic": r["sys"], 
-        "diastolic": r["dia"], 
+        "datetime": r["time_str"],
+        "systolic": r["sys"],
+        "diastolic": r["dia"],
         "pulse": r["pulse"],
         "arrhythmia": r.get("arrhythmia", False),
+        "ihb": r.get("ihb", False),
         "afib": r.get("afib", False),
-        "cuff_status": r.get("cuff_status", "OK")
+        "mam": r.get("mam", 0),
+        "cuff_ok": r.get("cuff_ok", True),
     } for r in bp_records]
+    mapping_data = load_measurement_mapping(
+        hass
+    )
+
+    for item in hist_list:
+
+        record_key = (
+            f"{mac}_{item['datetime']}"
+        )
+
+        mapping = mapping_data.get(
+            record_key
+        )
+
+        if mapping:
+            item["user_tag"] = (
+                mapping.get(
+                    "assigned_user_tag"
+                )
+            )    
     sensors["u2"]["history"].update_history_state(len(hist_list), hist_list)
 
 

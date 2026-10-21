@@ -71,7 +71,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         sensors_map[user]["history"] = history_sensor
 
     # Publish the sensor map to the integration runtime context for use by the background worker
-    entry_context["sensors"] = sensors_map
+    entry_context["sensors"].clear()
+    entry_context["sensors"].update(sensors_map)
 
     # Register entities with Home Assistant Core
     async_add_entities(entities)

@@ -99,3 +99,13 @@ clear_history:
               value: "u1"
             - label: "User 2 (u2)"
               value: "u2"
+repair_bluetooth:
+  name: Repair Bluetooth Bond
+  description: Starts Microlife Bluetooth repair workflow.
+  fields:
+    mac:
+      name: Device MAC Address
+      description: Bluetooth MAC address of Microlife device.
+      required: true
+      selector:
+        text:

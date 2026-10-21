@@ -69,7 +69,21 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
         mac,
         connectable=True,
     )
+    _LOGGER.error(
+        "[WORKER] BLE_DEVICE=%r",
+        ble_device,
+    )
 
+    _LOGGER.error(
+        "[WORKER] SERVICE_INFO=%r",
+        service_info,
+    )
+
+    _LOGGER.error(
+        "[WORKER] ADDRESS=%s RSSI=%s",
+        getattr(service_info, "address", None),
+        getattr(service_info, "rssi", None),
+    )
     entry_context = hass.data.setdefault(
         DOMAIN,
         {}
@@ -117,13 +131,18 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
 
     try:
         from bleak_retry_connector import establish_connection, BleakClientWithServiceCache, BleakConnectionError
-        
+        _LOGGER.error(
+            "[WORKER] CONNECT START"
+        )
         # Подключаемся через кэширующий клиент
         client = await establish_connection(
             BleakClientWithServiceCache, ble_device, f"Microlife {device_type.upper()}",
             max_attempts=3, timeout=15.0, dangerous_use_bleak_cache=False
         )
-        
+        _LOGGER.error(
+            "[WORKER] CONNECT SUCCESS client=%r",
+            client,
+        )
         if not client.is_connected:
             _LOGGER.error("[Microlife Connection] Link reported success, but client.is_connected is False!")
             return
@@ -196,7 +215,11 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
                     _LOGGER.info("[Microlife Worker] User 1 raw buffer received. Size: %s bytes", len(data_u1) if data_u1 else 0)
                     
                     records_u1 = parse_ideabus_matrix(data_u1, device_type)
-                    update_bpm_user1(sensors, records_u1)
+                    _LOGGER.error("DEBUG sensors type=%s", type(sensors))
+                    _LOGGER.error("DEBUG sensors=%r", sensors)
+                    _LOGGER.error("DEBUG sensor keys=%s", list(sensors.keys()))
+                    _LOGGER.error("DEBUG records_u1 count=%s", len(records_u1))
+                    update_bpm_user1(hass, mac, sensors, records_u1)
                     
                     _LOGGER.info("[Microlife Worker] Applying mandatory 2.0s SDK memory stabilization cooldown...")
                     await asyncio.sleep(2.0)
@@ -211,7 +234,7 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
                     _LOGGER.info("[Microlife Worker] User 2 raw buffer received. Size: %s bytes", len(data_u2) if data_u2 else 0)
                     
                     records_u2 = parse_ideabus_matrix(data_u2, device_type)
-                    update_bpm_user2(sensors, records_u2)
+                    update_bpm_user2(hass, mac, sensors, records_u2)
                 
         except TimeoutError:
             _LOGGER.error("[Microlife Worker] Download session timed out. Hardware did not respond in 30s.")

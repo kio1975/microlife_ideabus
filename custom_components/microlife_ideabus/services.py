@@ -135,7 +135,7 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
         all_measurements = []
         for u_data in sensors.values():
             if "history" in u_data:
-                all_measurements.extend(u_data["history"].extra_state_attributes.get("records", []))
+                all_measurements.extend(u_data["history"].extra_state_attributes.get("measurements", []))
                 
         filtered = []
         for m in all_measurements:
@@ -161,14 +161,48 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
             if export_format == "csv":
                 with open(file_path, mode="w", encoding="utf-8", newline="") as f:
                     writer = csv.writer(f, delimiter=";")
-                    writer.writerow(["Timestamp", "SYS", "DIA", "Pulse", "User"])
+                    writer.writerow([
+                      "Timestamp",
+                      "SYS",
+                      "DIA",
+                      "Pulse",
+                      "Arrhythmia",
+                      "IHB",
+                      "AFIB",
+                      "MAM",
+                      "CuffOK",
+                      "User",
+                    ])
+
                     for row in filtered:
-                        writer.writerow([row.get("datetime"), row.get("systolic"), row.get("diastolic"), row.get("pulse"), row.get("user_tag", "unknown")])
+                      writer.writerow([
+                          row.get("datetime"),
+                          row.get("systolic"),
+                          row.get("diastolic"),
+                          row.get("pulse"),
+                          row.get("arrhythmia"),
+                          row.get("ihb"),
+                          row.get("afib"),
+                          row.get("mam"),
+                          row.get("cuff_ok"),
+                          row.get("user_tag", "unknown"),
+                      ])
             else:
                 with open(file_path, mode="w", encoding="utf-8") as f:
                     f.write(f"Report for user: {target_user}\n")
                     for row in filtered:
-                        f.write(f"{row.get('datetime')} | SYS: {row.get('systolic')} | DIA: {row.get('diastolic')} | Pulse: {row.get('pulse')}\n")
+                        f.write(
+                            f"{row.get('datetime')} | "
+                            f"SYS:{row.get('systolic')} | "
+                            f"DIA:{row.get('diastolic')} | "
+                            f"PULSE:{row.get('pulse')} | "
+                            f"ARR:{row.get('arrhythmia')} | "
+                            f"IHB:{row.get('ihb')} | "
+                            f"AFIB:{row.get('afib')} | "
+                            f"MAM:{row.get('mam')} | "
+                            f"CUFF:{row.get('cuff_ok')} | "
+                            f"USER:{row.get('user_tag', 'unknown')}\n"
+                        )
             return generated_filename
 
         filename = await hass.async_add_executor_job(save_file_to_disk)
@@ -202,7 +236,7 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
                     "title": "Microlife Bluetooth Repair",
                     "message": (
                         "Repair workflow started successfully. "
-                        "Complete pairing by entering the PIN shown on the device."
+                        "Complete Bluetooth pairing in the Microlife config flow."
                     ),
                 },
             )
@@ -228,13 +262,8 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
                 mac,
             )
 
-    hass.services.async_register(DOMAIN, "tag_measurement", handle_tag_measurement)
-    hass.services.async_register(DOMAIN, "export_history", handle_export_history)
-    hass.services.async_register(DOMAIN, "sync_time", handle_sync_time, schema=SERVICE_CLEAR_SCHEMA)
-    hass.services.async_register(DOMAIN, "clear_history", handle_clear_history, schema=SERVICE_CLEAR_SCHEMA)
-    hass.services.async_register(
-        DOMAIN,
-        "repair_bluetooth",
-        handle_repair_bluetooth,
-        schema=SERVICE_REPAIR_SCHEMA,
-    )
+    if not hass.services.has_service(DOMAIN, "tag_measurement",):hass.services.async_register(DOMAIN, "tag_measurement", handle_tag_measurement)
+    if not hass.services.has_service(DOMAIN, "export_history",):hass.services.async_register(DOMAIN, "export_history", handle_export_history)
+    if not hass.services.has_service(DOMAIN, "sync_time",):hass.services.async_register(DOMAIN, "sync_time", handle_sync_time, schema=SERVICE_CLEAR_SCHEMA)
+    if not hass.services.has_service(DOMAIN, "clear_history",):hass.services.async_register(DOMAIN, "clear_history", handle_clear_history, schema=SERVICE_CLEAR_SCHEMA)
+    if not hass.services.has_service(DOMAIN, "repair_bluetooth",):hass.services.async_register(DOMAIN, "repair_bluetooth", handle_repair_bluetooth, schema=SERVICE_REPAIR_SCHEMA)
