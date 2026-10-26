@@ -1,6 +1,7 @@
 """Isolated background pairing assistant for Microlife Ideabus without multi-process GATT collisions."""
 import asyncio
 import logging
+import time
 import re
 _LOGGER = logging.getLogger(__name__)
 
@@ -15,9 +16,9 @@ class MicrolifePairingHelper:
         self.passkey = None
 
     async def start_pairing_session(self) -> bool:
-        """Запуск интерактивного процесса bluetoothctl и инициирование сопряжения."""
+        """Start interactive bluetoothctl session and initiate pairing."""
         try:
-            _LOGGER.info("[Microlife Helper] Spawning interactive pairing daemon shell...")
+            _LOGGER.debug("[Microlife Helper] Spawning interactive pairing daemon shell...")
             self._pairing_task = await asyncio.create_subprocess_exec(
                 "bluetoothctl",
                 stdin=asyncio.subprocess.PIPE,
@@ -26,14 +27,18 @@ class MicrolifePairingHelper:
             )
 
                         
-            # Регистрируем агент ввода клавиатуры на шине DBus Linux
+            # Register keyboard input agent on the Linux DBus bus.
             self._pairing_task.stdin.write(b"agent DisplayYesNo\n")
             self._pairing_task.stdin.write(b"default-agent\n")
             self._pairing_task.stdin.write(b"power on\n")
             self._pairing_task.stdin.write(b"pairable on\n")
+
+            self._pairing_task.stdin.write(b"scan on\n")
+            await self._pairing_task.stdin.drain()
+
             
-            # Инициируем нативную команду сопряжения BlueZ
-            _LOGGER.info("[Microlife Helper] Sending pair command for MAC: %s", self.mac_address)
+            # Initiate native BlueZ pairing command.
+            _LOGGER.debug("[Microlife Helper] Sending pair command for MAC: %s", self.mac_address)
             self._pairing_task.stdin.write(f"pair {self.mac_address}\n".encode())
             await self._pairing_task.stdin.drain()
  
@@ -68,7 +73,7 @@ class MicrolifePairingHelper:
                 errors="ignore"
             ).strip()
 
-            _LOGGER.error(
+            _LOGGER.debug(
                 "[Microlife Helper RAW] %r",
                 text,
             )
@@ -79,13 +84,15 @@ class MicrolifePairingHelper:
             )
 
             if match:
-                self.passkey = match.group(1)
+                detected_passkey = match.group(1)
 
-                _LOGGER.warning(
-                    "[Microlife Helper] Passkey detected: %s",
-                    self.passkey,
-                )
+                if self.passkey != detected_passkey:
+                    self.passkey = detected_passkey
 
+                    _LOGGER.info(
+                        "[Microlife Helper] Passkey detected: %s",
+                        self.passkey,
+                    )
                 return True
 
             if "Failed to pair" in text:
@@ -112,7 +119,7 @@ class MicrolifePairingHelper:
                 errors="ignore"
             ).strip()
 
-            _LOGGER.error(
+            _LOGGER.debug(
                 "[Microlife Helper RAW] %r",
                 text,
             )
@@ -123,12 +130,7 @@ class MicrolifePairingHelper:
             )
 
             if match:
-                self.passkey = match.group(1)
-
-                _LOGGER.warning(
-                    "[Microlife Helper] Passkey detected: %s",
-                    self.passkey,
-                )
+                continue
 
             if "Pairing successful" in text:
                 return True
@@ -149,22 +151,28 @@ class MicrolifePairingHelper:
             return False
 
         try:
-            # 1. # Confirm Bluetooth numeric comparison request.
+            # Confirm Bluetooth numeric comparison request.
             _LOGGER.info("[Microlife Helper] Confirming Bluetooth passkey...")
             self._pairing_task.stdin.write(response)
             await self._pairing_task.stdin.drain()
             
-            # Ждем  пока Linux завершит JustWorks хэндшейк
-            _LOGGER.info("[Microlife Helper] Waiting for bluetoothctl pairing confirmation...")
+            # Wait for Linux to complete the JustWorks handshake.
+            _LOGGER.debug("[Microlife Helper] Waiting for bluetoothctl pairing confirmation...")
+            start = time.monotonic()
+            
             pairing_ok = await self.wait_for_pairing_success()
 
+            _LOGGER.debug(
+                "[PAIRING TIMING] pairing confirmation took %.2f sec",
+                time.monotonic() - start,
+            )
             if not pairing_ok:
                 _LOGGER.error(
                     "[Microlife Helper] Pairing did not complete."
                 )
                 return False
 
-            # 2. Выставляем статус доверенного устройства на уровне ОС Linux
+            # Mark device as trusted at the operating system level.
             _LOGGER.info("[Microlife Helper] Setting trust flag for MAC: %s", self.mac_address)
             self._pairing_task.stdin.write(
                 f"trust {self.mac_address}\n".encode()
@@ -172,7 +180,7 @@ class MicrolifePairingHelper:
             
             await self._pairing_task.stdin.drain()
 
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.5)
             _LOGGER.info("[Microlife Helper] OS-level bonding completed successfully. Finalizing context...")
             return True
 
@@ -180,7 +188,7 @@ class MicrolifePairingHelper:
             _LOGGER.error("[Microlife Helper] Critical failure inside encryption tunnel: %s", err)
             return False
         finally:
-            # Начисто закрываем сессию через вежливый выход
+            # Cleanly terminate pairing session.
             await self.close_session()
 
     async def remove_device(self) -> bool:
@@ -189,7 +197,7 @@ class MicrolifePairingHelper:
         proc = None
 
         try:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[Microlife Helper] Removing existing bond for %s",
                 self.mac_address,
             )
@@ -234,9 +242,7 @@ class MicrolifePairingHelper:
             _LOGGER.warning(
                 "[Microlife Helper] Bond removal failed, continuing anyway."
             )
-
-        await asyncio.sleep(1.0)
-
+        
         started = await self.start_pairing_session()
 
         if not started:
@@ -245,17 +251,17 @@ class MicrolifePairingHelper:
         return await self.wait_for_passkey()
 
     async def close_session(self):
-        """Штатное вежливое завершение фонового подпроцесса без разрыва стека BlueZ."""
+        """Gracefully terminate background bluetoothctl session."""
         if self._pairing_task:
-            _LOGGER.info("[Microlife Helper] Releasing Bluetooth adapter hardware registers...")
+            _LOGGER.debug("[Microlife Helper] Releasing Bluetooth adapter hardware registers...")
             try:
                 if self._pairing_task.returncode is None:
-                    # ИСПРАВЛЕНО: Шлём штатную команду утилиты bluetoothctl для корректного 
-                    # закрытия BLE-сессии на уровне контроллера. Исключает экстренное мигание прибора.
+                    # Use native bluetoothctl exit command to gracefully
+                    # close BLE session on the controller side.
                     self._pairing_task.stdin.write(b"exit\n")
                     await self._pairing_task.stdin.drain()
-                    # Даем полсекунды BlueZ отправить пакет LL_TERMINATE_IND в радиоэфир тонометра
-                    await asyncio.sleep(0.5)
+                    # Give BlueZ time to transmit LL_TERMINATE_IND.
+                    await asyncio.sleep(1.5)
             except Exception as pipe_err:
                 _LOGGER.debug("[Microlife Helper] Pipe flush skipped: %s", pipe_err)
             finally:
@@ -266,4 +272,4 @@ class MicrolifePairingHelper:
                 except Exception:
                     pass
             self._pairing_task = None
-            _LOGGER.info("[Microlife Helper] Low-level Bluetooth transport context finalized.")
+            _LOGGER.debug("[Microlife Helper] Low-level Bluetooth transport context finalized.")

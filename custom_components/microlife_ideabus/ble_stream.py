@@ -32,7 +32,7 @@ async def request_history_buffered(
             clean_chunk = bytearray(raw_data)
 
             if clean_chunk:
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "[Microlife Stream] RX Chunk segment: %s | Size: %s bytes",
                     clean_chunk.hex().upper(),
                     len(clean_chunk),
@@ -63,114 +63,30 @@ async def request_history_buffered(
             target_notify_uuid,
         )
         return buffer
-
-    #
-    # FULL GATT DUMP
-    #
-
-    _LOGGER.error("========== FULL GATT DUMP START ==========")
-
-    try:
-
-        for service in client.services:
-
-            _LOGGER.error(
-                "SERVICE UUID=%s",
-                service.uuid,
-            )
-
-            for char in service.characteristics:
-
-                _LOGGER.error(
-                    "CHAR UUID=%s HANDLE=%s PROPERTIES=%s",
-                    char.uuid,
-                    char.handle,
-                    char.properties,
-                )
-
-                if "read" in char.properties:
-
-                    try:
-
-                        value = await client.read_gatt_char(
-                            char.uuid
-                        )
-
-                        _LOGGER.error(
-                            "READ UUID=%s VALUE=%s",
-                            char.uuid,
-                            bytes(value).hex().upper(),
-                        )
-
-                    except Exception as read_err:
-
-                        _LOGGER.error(
-                            "READ UUID=%s FAILED=%r",
-                            char.uuid,
-                            read_err,
-                        )
-
-                for desc in char.descriptors:
-
-                    _LOGGER.error(
-                        "DESC HANDLE=%s UUID=%s",
-                        desc.handle,
-                        getattr(desc, "uuid", None),
-                    )
-
-                    try:
-
-                        value = await client.read_gatt_descriptor(
-                            desc.handle
-                        )
-
-                        _LOGGER.error(
-                            "DESC READ HANDLE=%s VALUE=%s",
-                            desc.handle,
-                            bytes(value).hex().upper(),
-                        )
-
-                    except Exception as desc_err:
-
-                        _LOGGER.error(
-                            "DESC READ HANDLE=%s FAILED=%r",
-                            desc.handle,
-                            desc_err,
-                        )
-
-    except Exception as dump_err:
-
-        _LOGGER.exception(
-            "FULL GATT DUMP FAILED: %r",
-            dump_err,
-        )
-
-    _LOGGER.error("========== FULL GATT DUMP END ==========")
-
     try:
         await client.start_notify(
             char_obj,
             _notification_handler,
         )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "[Microlife Stream] Notification subscription active."
         )
 
     except Exception as notify_err:
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "[Microlife Stream] Notification subscription failed: %s",
             notify_err,
         )
 
         return buffer
 
-    _LOGGER.info(
+    _LOGGER.debug(
         "[Microlife Stream] Waiting 4.0s for device handshake and initial status packets..."
     )
 
-    await asyncio.sleep(4.0)
+    await asyncio.sleep(2.0)
 
     if cmd:
 
@@ -192,41 +108,41 @@ async def request_history_buffered(
 
             return buffer
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "CMD HEX = %s",
             bytearray(cmd).hex().upper(),
         )
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "CMD LEN = %s",
             len(cmd),
         )
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "WRITE UUID = %s",
             target_write_uuid,
         )
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "WRITE CHAR OBJECT = %s",
             write_char,
         )
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "WRITE CHAR PROPERTIES = %s",
             getattr(write_char, "properties", None),
         )
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "CONNECTED = %s",
             client.is_connected,
         )
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "WRITE RESPONSE MODE = True"
         )
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "TEST BEFORE HISTORY"
         )
 
@@ -241,7 +157,7 @@ async def request_history_buffered(
                 timeout=3.0,
             )
 
-            _LOGGER.error(
+            _LOGGER.debug(
                 "TEST AFTER HISTORY"
             )
 
@@ -260,7 +176,7 @@ async def request_history_buffered(
 
             return buffer
 
-        _LOGGER.error(
+        _LOGGER.debug(
             "CONNECTED = %s",
             client.is_connected,
         )
@@ -271,7 +187,7 @@ async def request_history_buffered(
             "[Microlife Stream] Empty command received, skipping write phase."
         )
 
-    _LOGGER.info(
+    _LOGGER.debug(
         "[Microlife Stream] Entering queue-based streaming loop. Awaiting history frames..."
     )
 

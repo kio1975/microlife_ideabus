@@ -6,11 +6,12 @@ import logging
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.components.bluetooth import async_ble_device_from_address
+from homeassistant.components.bluetooth import (async_ble_device_from_address, async_discovered_service_info)
 from homeassistant.core import callback
 
 from .const import DOMAIN
 from .pairing_helper import MicrolifePairingHelper
+from .microlife_devices import is_microlife_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.profile1_name = None
         self.profile2_name = None
         self.helper = None
+        self._discovered_devices = {}
 
     async def async_step_user(self, user_input=None):
         """Step 1: Device selection and pairing initialization."""
@@ -48,6 +50,8 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+
+            selected_device = user_input["mac"]
 
             self.mac_address = (
                 user_input["mac"]
@@ -71,7 +75,7 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ).strip()
             )
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 "[Microlife Flow] Step User submitted for MAC: %s",
                 self.mac_address,
             )
@@ -117,7 +121,7 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     break
 
                 await asyncio.sleep(0.2)
-            _LOGGER.error(
+            _LOGGER.debug(
                 "PASSKEY BEFORE CONFIRM STEP = %s",
                 self.helper.passkey,
             )                
@@ -142,7 +146,7 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors
                 )
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 "[Microlife Flow] Confirming Bluetooth passkey."
             )
 
@@ -186,26 +190,78 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ):
         """Render initial setup form."""
 
-        default_mac = "EF:06:40:CE:23:8E"
         default_type = "blood_pressure"
 
         if user_input is not None:
-
-            default_mac = user_input.get(
-                "mac",
-                default_mac,
-            )
-
             default_type = user_input.get(
                 "device_type",
                 default_type,
             )
 
+        self._discovered_devices = {}
+
+        for discovery_info in async_discovered_service_info(
+            self.hass,
+            False,
+        ):
+            name = (discovery_info.name or "").upper()
+
+            service_uuids = {
+                uuid.lower()
+                for uuid in (
+                    discovery_info.service_uuids or []
+                )
+            }
+
+            if not is_microlife_device(
+                discovery_info.name,
+                service_uuids,
+            ):
+                continue
+
+            address = (
+                discovery_info.address
+                .upper()
+                .strip()
+            )
+            _LOGGER.debug(
+                "[MICROLIFE DEVICE] name=%s address=%s",
+                discovery_info.name,
+                discovery_info.address,
+            )
+            display_name = (
+                discovery_info.name
+                or "Unknown BLE Device"
+            )
+
+            self._discovered_devices[address] = (
+                f"{display_name} ({address})"
+            )
+
+        if self._discovered_devices:
+
+            mac_selector = vol.In(
+                self._discovered_devices
+            )
+
+        else:
+
+            mac_selector = str
+
         data_schema = vol.Schema(
             {
                 vol.Required(
                     "mac",
-                    default=default_mac,
+                ): mac_selector,
+
+                vol.Required(
+                    "profile1_name",
+                    default="User 1 name",
+                ): str,
+
+                vol.Required(
+                    "profile2_name",
+                    default="User 2 name",
                 ): str,
 
                 vol.Required(
@@ -214,16 +270,6 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): vol.In(
                     DEVICE_TYPES
                 ),
-
-                vol.Required(
-                    "profile1_name",
-                    default="Profile 1",
-                ): str,
-
-                vol.Required(
-                    "profile2_name",
-                    default="Profile 2",
-                ): str,
             }
         )
 
@@ -232,7 +278,6 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
         )
-
     def _show_confirm_form(
         self,
         errors,
@@ -246,7 +291,7 @@ class MicrolifeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             and self.helper.passkey
         ):
             passkey = self.helper.passkey
-        _LOGGER.error(
+        _LOGGER.debug(
             "PASSKEY IN UI FORM = %s",
             passkey,
         )

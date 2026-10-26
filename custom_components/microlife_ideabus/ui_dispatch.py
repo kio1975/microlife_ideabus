@@ -33,11 +33,11 @@ def load_measurement_mapping(hass):
 
 def update_bpm_user1(hass, mac, sensors, records):
 
-    _LOGGER.error("DEBUG sensors type=%s", type(sensors))
-    _LOGGER.error("DEBUG sensors=%r", sensors)
+    _LOGGER.debug("DEBUG sensors type=%s", type(sensors))
+    _LOGGER.debug("DEBUG sensors=%r", sensors)
 
     if "u1" not in sensors:
-        _LOGGER.error(
+        _LOGGER.debug(
             "DEBUG u1 missing. Available keys=%s",
             list(sensors.keys()) if hasattr(sensors, "keys") else "NO_KEYS"
         )
@@ -51,6 +51,12 @@ def update_bpm_user1(hass, mac, sensors, records):
 
     bp_records.sort(key=lambda x: x.get("time_obj"), reverse=True)
     newest = bp_records[0]
+    _LOGGER.debug(
+        "TIME DEBUG raw=%r tzinfo=%r iso=%s",
+        newest["time_obj"],
+        newest["time_obj"].tzinfo,
+        newest["time_obj"].isoformat(),
+    )
     ts = newest["time_obj"].isoformat()
     
     _LOGGER.info("[Microlife UI Dispatch] Committing User 1: SYS=%s, DIA=%s", newest['sys'], newest['dia'])
@@ -61,7 +67,25 @@ def update_bpm_user1(hass, mac, sensors, records):
     # ИСПРАВЛЕНО: Передаем строковый ts вместо живого объекта datetime,
     # чтобы исключить TypeError краш JSON-сериализатора в ядре HA Core.
     sensors["u1"]["time"].update_state(ts, ts)
-    
+    sensors["u1"]["afib"].update_state(
+        newest.get("afib", False)
+    )
+    sensors["u1"]["ihb"].update_state(
+        newest.get("ihb", False)
+    )
+
+    sensors["u1"]["arrhythmia"].update_state(
+        newest.get("arrhythmia", False)
+    )
+
+    sensors["u1"]["mam"].update_state(
+        bool(newest.get("mam", 0))
+    )
+
+    sensors["u1"]["cuff_ok"].update_state(
+        newest.get("cuff_ok", True)
+    )
+   
     hist_list = [{
         "device_user": "u1",
         "datetime": r["time_str"],
@@ -101,7 +125,7 @@ def update_bpm_user1(hass, mac, sensors, records):
 def update_bpm_user2(hass, mac, sensors, records):
 
     if "u2" not in sensors:
-        _LOGGER.error(
+        _LOGGER.debug(
             "DEBUG u2 missing. Available keys=%s",
             list(sensors.keys()) if hasattr(sensors, "keys") else "NO_KEYS"
         )
@@ -114,6 +138,12 @@ def update_bpm_user2(hass, mac, sensors, records):
 
     bp_records.sort(key=lambda x: x.get("time_obj"), reverse=True)
     newest = bp_records[0]
+    _LOGGER.debug(
+        "TIME DEBUG raw=%r tzinfo=%r iso=%s",
+        newest["time_obj"],
+        newest["time_obj"].tzinfo,
+        newest["time_obj"].isoformat(),
+    )
     ts = newest["time_obj"].isoformat()
     
     _LOGGER.info("[Microlife UI Dispatch] Committing User 2: SYS=%s, DIA=%s", newest['sys'], newest['dia'])
@@ -123,7 +153,25 @@ def update_bpm_user2(hass, mac, sensors, records):
     
     # ИСПРАВЛЕНО: Фикс типизации времени для Пользователя 2
     sensors["u2"]["time"].update_state(ts, ts)
-    
+    sensors["u2"]["afib"].update_state(
+        newest.get("afib", False)
+    )
+    sensors["u2"]["ihb"].update_state(
+        newest.get("ihb", False)
+    )
+
+    sensors["u2"]["arrhythmia"].update_state(
+        newest.get("arrhythmia", False)
+    )
+
+    sensors["u2"]["mam"].update_state(
+        bool(newest.get("mam", 0))
+    )
+
+    sensors["u2"]["cuff_ok"].update_state(
+        newest.get("cuff_ok", True)
+    )
+
     hist_list = [{
         "device_user": "u2",
         "datetime": r["time_str"],

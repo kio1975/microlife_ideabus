@@ -8,7 +8,7 @@ PLATFORMS = [Platform.SENSOR]
 NOTIFY_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
 WRITE_UUID  = "0000fff2-0000-1000-8000-00805f9b34fb"
 
-# --- ПОЛНЫЙ НАБОР СИСТЕМНЫХ UUID ИЗ ВАШЕГО РАБОЧЕГО ПК-СКРИПТА ---
+# --- Device Information Characteristic UUIDs ---
 CHAR_MANUFACTURER = "00002a29-0000-1000-8000-00805f9b34fb"
 CHAR_MODEL        = "00002a24-0000-1000-8000-00805f9b34fb"
 CHAR_SERIAL       = "00002a25-0000-1000-8000-00805f9b34fb"
@@ -27,12 +27,15 @@ DEVICE_THERMO_SEND = 0xFE
 DEVICE_WBO_OFFICE = 0x42
 
 def calc_checksum_1byte(payload: bytearray) -> int:
+    """Calculate 8-bit IdeaBus checksum."""
     return sum(payload) & 0xFF
 
 def calc_checksum_2byte(payload: bytearray) -> int:
+    """Calculate 16-bit IdeaBus checksum."""
     return sum(payload) & 0xFFFF
 
 def build_microlife_command(device_type: str, user_index: int) -> bytes:
+    """Build IdeaBus command packet for supported Microlife devices."""
     if device_type == "oximeter":
         return b""
     if device_type == "watchbp_office":

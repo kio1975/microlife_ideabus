@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 from .device import get_microlife_device_info
@@ -60,15 +61,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         
         # History matrix sensor
         history_sensor = MicrolifeHistorySensor(mac_address, f"{user}_history", f"{user_label} History Matrix", device_info)
+        afib_sensor = MicrolifeFlagSensor(mac_address, f"{user}_afib", f"{user_label} AFIB", device_info)
+        ihb_sensor = MicrolifeFlagSensor(mac_address, f"{user}_ihb", f"{user_label} IHB", device_info)
+        arrhythmia_sensor = MicrolifeFlagSensor(mac_address, f"{user}_arrhythmia", f"{user_label} Arrhythmia", device_info)
+        mam_sensor = MicrolifeFlagSensor(mac_address, f"{user}_mam", f"{user_label} MAM", device_info)
+        cuff_ok_sensor = MicrolifeFlagSensor(mac_address, f"{user}_cuff_ok", f"{user_label} Cuff OK", device_info)
+
+
+        entities.extend([systolic, diastolic, pulse, time_sensor, history_sensor, afib_sensor, ihb_sensor, arrhythmia_sensor, mam_sensor, cuff_ok_sensor])
+
         
-        entities.extend([systolic, diastolic, pulse, time_sensor, history_sensor])
-        
+
         # Mapping used by ui_dispatch.py update handlers
         sensors_map[user]["systolic"] = systolic
         sensors_map[user]["diastolic"] = diastolic
         sensors_map[user]["pulse"] = pulse
         sensors_map[user]["time"] = time_sensor
         sensors_map[user]["history"] = history_sensor
+        sensors_map[user]["afib"] = afib_sensor
+        sensors_map[user]["ihb"] = ihb_sensor
+        sensors_map[user]["arrhythmia"] = arrhythmia_sensor
+        sensors_map[user]["mam"] = mam_sensor
+        sensors_map[user]["cuff_ok"] = cuff_ok_sensor
+
+
+
+        
 
     # Publish the sensor map to the integration runtime context for use by the background worker
     entry_context["sensors"].clear()
@@ -76,11 +94,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     # Register entities with Home Assistant Core
     async_add_entities(entities)
-    _LOGGER.info("[Microlife Core] Full 10-sensor pipeline integrated into HA Core successfully.")
+    _LOGGER.info("[Microlife Core] Full 20-sensor pipeline integrated into HA Core successfully.")
     return True
 
 
-class MicrolifeBpmSensor(SensorEntity):
+class MicrolifeBpmSensor(RestoreEntity, SensorEntity):
     """Representation of Microlife numeric sensors (blood pressure and pulse)."""
 
     def __init__(self, mac, unique_suffix, name, unit, device_class, device_info):
@@ -97,7 +115,24 @@ class MicrolifeBpmSensor(SensorEntity):
             
         self._attr_native_value = None
         self._attr_extra_state_attributes = {}
+        
+    async def async_added_to_hass(self):
+        """Restore previous state."""
+        await super().async_added_to_hass()
 
+        if (state := await self.async_get_last_state()) is None:
+            return
+        if state.state in ("unknown", "unavailable", None):
+            return
+        try:
+            self._attr_native_value = int(float(state.state))
+        except (ValueError, TypeError):
+            self._attr_native_value = state.state
+
+        self._attr_extra_state_attributes.update(
+            state.attributes
+        )
+        
     def update_state(self, value, ts=None):
         """Update the current sensor value."""
         self._attr_native_value = value
@@ -106,7 +141,7 @@ class MicrolifeBpmSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-class MicrolifeTimestampSensor(SensorEntity):
+class MicrolifeTimestampSensor(RestoreEntity, SensorEntity):
     """Dedicated Home Assistant timestamp sensor."""
 
     def __init__(self, mac, unique_suffix, name, device_info):
@@ -120,6 +155,25 @@ class MicrolifeTimestampSensor(SensorEntity):
         self._attr_native_value = None
         self._attr_extra_state_attributes = {}
 
+    async def async_added_to_hass(self):
+        """Restore previous state."""
+        await super().async_added_to_hass()
+
+        if (state := await self.async_get_last_state()) is None:
+            return
+        if state.state in ("unknown", "unavailable", None):
+            return
+        try:
+            self._attr_native_value = datetime.fromisoformat(
+                state.state
+            )
+        except ValueError:
+            pass
+
+        self._attr_extra_state_attributes.update(
+            state.attributes
+        )
+        
     def update_state(self, value, ts=None):
         """Update date/time state. Expects a datetime object."""
         if isinstance(value, datetime):
@@ -138,7 +192,7 @@ class MicrolifeTimestampSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-class MicrolifeHistorySensor(SensorEntity):
+class MicrolifeHistorySensor(RestoreEntity, SensorEntity):
     """History archive sensor used to store the complete measurement matrix."""
 
     def __init__(self, mac, unique_suffix, name, device_info):
@@ -151,8 +205,57 @@ class MicrolifeHistorySensor(SensorEntity):
         self._attr_native_value = 0
         self._attr_extra_state_attributes = {"records": []}
 
+    async def async_added_to_hass(self):
+        """Restore previous state."""
+        await super().async_added_to_hass()
+
+        if (state := await self.async_get_last_state()) is None:
+            return
+        if state.state in ("unknown", "unavailable", None):
+            return
+
+        records = state.attributes.get("records",[])
+
+        self._attr_native_value = len(records)
+
+        self._attr_extra_state_attributes["records"] = records
+        
     def update_history_state(self, count, history_list):
         """Commit measurement history received from ui_dispatch.py."""
         self._attr_native_value = count
         self._attr_extra_state_attributes["records"] = history_list
+        self.async_write_ha_state()
+
+class MicrolifeFlagSensor(
+    RestoreEntity,
+    SensorEntity,
+):
+    def __init__(
+        self,
+        mac,
+        unique_suffix,
+        name,
+        device_info,
+    ):
+        self._attr_unique_id = (
+            f"microlife_{mac}_{unique_suffix}"
+        )
+        self._attr_name = name
+        self._attr_device_info = device_info
+        self._attr_native_value = False
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+
+        if (state := await self.async_get_last_state()) is None:
+            return
+        if state.state in ("unknown", "unavailable", None):
+            return
+        self._attr_native_value = (
+            str(state.state).lower()
+            in ("true", "on", "1")
+        )
+
+    def update_state(self, value):
+        self._attr_native_value = bool(value)
         self.async_write_ha_state()

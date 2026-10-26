@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
-
+import time
+from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import (
-    async_register_callback,
-    BluetoothScanningMode,
+    async_register_advertisement_callback,
     BluetoothServiceInfoBleak,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -22,10 +22,10 @@ async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> bool:
-    """Настройка интеграции при активации Config Entry."""
+    """Set up integration when Config Entry is loaded."""
 
     _LOGGER.info(
-        "Инициализация интеграции Microlife Ideabus для устройства: %s",
+        "Initializing Microlife Ideabus integration for device: %s",
         entry.title,
     )
 
@@ -40,72 +40,151 @@ async def async_setup_entry(
 
     current_context = hass.data[DOMAIN][entry.entry_id]
 
-    register_microlife_services(
-        hass,
-        current_context["sensors"],
-    )
+    if not hass.data[DOMAIN].get("services_registered"):
+        register_microlife_services(
+            hass,
+            current_context["sensors"],
+        )
+        hass.data[DOMAIN]["services_registered"] = True
 
     mac_address = entry.data["mac"].upper().strip()
     device_type = entry.data["device_type"]
 
     def _bluetooth_advertisement_callback(
         service_info: BluetoothServiceInfoBleak,
-        change,
     ) -> None:
-        """Обработать Bluetooth advertisement целевого устройства."""
+        """Process Bluetooth advertisement from the target device."""
 
         advertisement_address = (
             service_info.address or ""
         ).upper().strip()
+        #("adv_counter", 0)
+        #current_context["adv_counter"] += 1
+        #_LOGGER.debug("[CALLBACK ENTRY] ""counter=%s ""addr=%s ""name=%s ""rssi=%s ""source=%s ""connectable=%s",current_context["adv_counter"],advertisement_address,getattr(service_info,"name", None),getattr(service_info, "rssi",None),getattr(service_info,"source", None),getattr(service_info, "connectable", None),)
 
-        # Callback зарегистрирован без внешнего адресного фильтра.
-        # Все чужие устройства немедленно отсекаются здесь.
+        try:
+            _LOGGER.debug(
+                "[SERVICE INFO DUMP] %s",
+                vars(service_info),
+            )
+        except Exception as ex:
+            _LOGGER.debug(
+                "[SERVICE INFO DUMP FAILED] %s",
+                ex,
+            )        
+        now = time.monotonic()
+
+        _LOGGER.debug(
+            "[ADV DEBUG] addr=%s raw=%r adv_time=%s now=%s delta=%s ",
+            advertisement_address,
+            getattr(service_info, "raw", None),
+            getattr(service_info, "time", None),
+            now,
+            (
+                now - service_info.time
+                if getattr(service_info, "time", None)
+                else "NO_TIME"
+            ),
+        )
+        # Callback is registered without an external address filter.
+        # All non-target devices are filtered out here.
         if advertisement_address != mac_address:
+            _LOGGER.debug(
+                "[NON TARGET ADV] addr=%s target=%s",
+                advertisement_address,
+                mac_address,
+            )
             return
-
-        _LOGGER.error(
-            "[RAW_ADV] B6 addr=%s name=%s rssi=%s "
-            "change=%s is_connecting=%s",
+        _LOGGER.debug(
+            "[TARGET DEVICE MATCH] %s",
+            advertisement_address,
+        )
+        _LOGGER.debug(
+            "[B6 FULL] addr=%s name=%s rssi=%s manufacturer=%s service_data=%s ",
             advertisement_address,
             getattr(service_info, "name", None),
             getattr(service_info, "rssi", None),
-            change,
-            current_context.get("is_connecting", False),
+            getattr(service_info, "manufacturer_data", None),
+            getattr(service_info, "service_data", None),
+        )
+        age = (
+            now - service_info.time
+            if getattr(service_info, "time", None)
+            else 999
         )
 
-        # Текущая BLE-сессия или cooldown ещё не завершены.
-        # Флаг сбрасывается в sensor_worker.py через 20 секунд.
+        if age > 1:
+            _LOGGER.debug(
+                "[STALE ADV] addr=%s age=%.3f",
+                advertisement_address,
+                age,
+            )
+            return
+
+        _LOGGER.debug(
+            "[B6 AGE] %.3f seconds",
+            age,
+        )
+
+        _LOGGER.debug(
+            "[ADV DEBUG] addr=%s rssi=%s raw=%r "
+            "time=%s delta=%.3f",
+            advertisement_address,
+            getattr(service_info, "rssi", None),
+            getattr(service_info, "raw", None),
+            getattr(service_info, "time", None),
+            age,
+        )
+
+        _LOGGER.debug(
+            "[RAW_ADV] B6 addr=%s name=%s rssi=%s "
+            "is_connecting=%s",
+            advertisement_address,
+            getattr(service_info, "name", None),
+            getattr(service_info, "rssi", None),
+            current_context.get("is_connecting", False),
+        )
+        _LOGGER.debug(
+            "[CONNECT LOCK BEFORE] %s",
+            current_context.get("is_connecting"),
+        )
+        # Current BLE session or cooldown period is still active.
+        # The flag is cleared in sensor_worker.py after 20 seconds.
         if current_context.get("is_connecting", False):
-            _LOGGER.error(
+            _LOGGER.debug(
                 "[DISCOVERY] B6 ADV ignored because "
                 "is_connecting=True"
             )
             return
 
-        _LOGGER.error(
+        _LOGGER.info(
             "[DISCOVERY] STARTING WORKER for B6 %s",
             advertisement_address,
         )
 
-        _LOGGER.info(
-            "[Microlife Callback] Target device %s detected "
-            "in air. Status change: %s. "
-            "Launching isolated task...",
-            mac_address,
-            change,
-        )
-
-        # Устанавливаем блокировку до запуска задачи.
-        # Это защищает от запуска нескольких worker одновременно.
+        # Set connection lock before starting the task.
+        # This prevents multiple workers from running simultaneously.
         current_context["is_connecting"] = True
-
+        _LOGGER.debug(
+            "[CONNECT LOCK SET TRUE] ts=%s",
+            time.monotonic(),
+        )
         def spawn_isolated_task() -> None:
-            """Запустить worker в отдельной асинхронной задаче."""
-
-            _LOGGER.error(
+            """Launch worker in a separate asynchronous task."""
+            _LOGGER.debug(
+                "[SPAWN TASK] addr=%s",
+                advertisement_address,
+            )
+            _LOGGER.debug(
                 "[DISCOVERY] SPAWNING WORKER TASK"
             )
-
+            _LOGGER.debug(
+                "[WORKER START REQUEST] "
+                "addr=%s "
+                "rssi=%s",
+                advertisement_address,
+                getattr(service_info, "rssi", None),
+            )
             asyncio.create_task(
                 connect_and_fetch_worker(
                     hass,
@@ -122,31 +201,39 @@ async def async_setup_entry(
             spawn_isolated_task
         )
 
-    # Даём BlueZ закрыть L2CAP-каналы,
-    # оставшиеся после Config Flow и сопряжения.
-    await asyncio.sleep(15.0)
+    # Allow BlueZ to close L2CAP channels
+    # left over from Config Flow and pairing.
+    await asyncio.sleep(5.0)
 
     await hass.config_entries.async_forward_entry_setups(
         entry,
         PLATFORMS,
     )
+    current_context["is_connecting"] = True
 
-    entry.async_on_unload(
-        async_register_callback(
+    asyncio.create_task(
+        connect_and_fetch_worker(
             hass,
-            _bluetooth_advertisement_callback,
-
-            # Намеренно без фильтра Home Assistant.
-            # Проверка MAC выполняется внутри callback.
-            {},
-
-            BluetoothScanningMode.PASSIVE,
+            entry,
+            current_context["sensors"],
+            mac_address,
+            device_type,
+            None,
+            current_context,
         )
     )
-
-    _LOGGER.error(
-        "[CALLBACK REGISTERED] "
-        "unfiltered callback with internal MAC guard; target=%s",
+    entry.async_on_unload(
+        bluetooth.async_register_advertisement_callback(
+            hass,
+            _bluetooth_advertisement_callback,
+            mac_address,
+        )
+    )
+    _LOGGER.debug(
+        "[CALLBACK REGISTERED] target=%s time=%s "
+        "unfiltered callback with internal MAC guard; target=%s ",
+        mac_address,
+        time.monotonic(),
         mac_address,
     )
     
@@ -157,10 +244,10 @@ async def async_unload_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> bool:
-    """Выгрузить или перезапустить интеграцию."""
+    """Unload integration."""
 
     _LOGGER.info(
-        "Выгрузка интеграции Microlife Ideabus"
+        "Unloading Microlife Ideabus integration"
     )
 
     unload_ok = await hass.config_entries.async_unload_platforms(
