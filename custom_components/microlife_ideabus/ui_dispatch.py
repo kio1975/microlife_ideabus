@@ -62,10 +62,7 @@ def update_bpm_user1(hass, mac, sensors, records):
     _LOGGER.info("[Microlife UI Dispatch] Committing User 1: SYS=%s, DIA=%s", newest['sys'], newest['dia'])
     sensors["u1"]["systolic"].update_state(newest["sys"], ts)
     sensors["u1"]["diastolic"].update_state(newest["dia"], ts)
-    sensors["u1"]["pulse"].update_state(newest["pulse"], ts)
-    
-    # ИСПРАВЛЕНО: Передаем строковый ts вместо живого объекта datetime,
-    # чтобы исключить TypeError краш JSON-сериализатора в ядре HA Core.
+    sensors["u1"]["pulse"].update_state(newest["pulse"], ts)    
     sensors["u1"]["time"].update_state(ts, ts)
     sensors["u1"]["afib"].update_state(
         newest.get("afib", False)
@@ -151,7 +148,7 @@ def update_bpm_user2(hass, mac, sensors, records):
     sensors["u2"]["diastolic"].update_state(newest["dia"], ts)
     sensors["u2"]["pulse"].update_state(newest["pulse"], ts)
     
-    # ИСПРАВЛЕНО: Фикс типизации времени для Пользователя 2
+    
     sensors["u2"]["time"].update_state(ts, ts)
     sensors["u2"]["afib"].update_state(
         newest.get("afib", False)

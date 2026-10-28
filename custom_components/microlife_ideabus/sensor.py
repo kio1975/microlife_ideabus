@@ -7,6 +7,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
 from .device import get_microlife_device_info
@@ -24,15 +25,90 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     if not entry_context:
         _LOGGER.error("[Microlife Core] Integration context missing from hass.data during sensor setup!")
         return False
-
+    device_meta = entry_context.setdefault(
+        "device_meta",
+        {}
+    )
     # Device association is now performed exclusively through the Bluetooth identifier.
     device_info = get_microlife_device_info(
         mac_address,
         device_type,
     )
-    entities = []
-    sensors_map = {"u1": {}, "u2": {}}
 
+    device_meta = entry_context.setdefault(
+        "device_meta",
+        {}
+    )
+
+    manufacturer_sensor = MicrolifeDeviceInfoSensor(
+        mac_address,
+        "manufacturer",
+        "Manufacturer",
+        device_info,
+        device_meta,
+    )
+
+    model_sensor = MicrolifeDeviceInfoSensor(
+        mac_address,
+        "model",
+        "Model",
+        device_info,
+        device_meta,
+    )
+
+    serial_sensor = MicrolifeDeviceInfoSensor(
+        mac_address,
+        "serial",
+        "Serial Number",
+        device_info,
+        device_meta,
+    )
+
+    firmware_sensor = MicrolifeDeviceInfoSensor(
+        mac_address,
+        "firmware",
+        "Firmware Version",
+        device_info,
+        device_meta,
+    )
+
+    hardware_sensor = MicrolifeDeviceInfoSensor(
+        mac_address,
+        "hardware",
+        "Hardware Revision",
+        device_info,
+        device_meta,
+    )
+
+    software_sensor = MicrolifeDeviceInfoSensor(
+        mac_address,
+        "software",
+        "Software Revision",
+        device_info,
+        device_meta,
+    )
+
+    rssi_sensor = MicrolifeDeviceInfoSensor(
+        mac_address,
+        "rssi",
+        "RSSI",
+        device_info,
+        device_meta,
+    )
+    
+    entities = []
+  
+    sensors_map = {"u1": {}, "u2": {}}
+    
+    sensors_map["device_info"] = {
+        "rssi": rssi_sensor,
+        "manufacturer": manufacturer_sensor,
+        "model": model_sensor,
+        "serial": serial_sensor,
+        "firmware": firmware_sensor,
+        "hardware": hardware_sensor,
+        "software": software_sensor,
+    }
     profile1_name = entry.options.get(
         "profile1_name",
         entry.data.get("profile1_name", "Profile 1"),
@@ -91,10 +167,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # Publish the sensor map to the integration runtime context for use by the background worker
     entry_context["sensors"].clear()
     entry_context["sensors"].update(sensors_map)
-
+    entry_context["device_info_sensors"] = {
+        "rssi": rssi_sensor,
+        "manufacturer": manufacturer_sensor,
+        "model": model_sensor,
+        "serial": serial_sensor,
+        "firmware": firmware_sensor,
+        "hardware": hardware_sensor,
+        "software": software_sensor,
+    }
+    entities.extend(
+        [
+            rssi_sensor,
+            manufacturer_sensor,
+            model_sensor,
+            serial_sensor,
+            firmware_sensor,
+            hardware_sensor,
+            software_sensor,
+        ]
+    )
     # Register entities with Home Assistant Core
     async_add_entities(entities)
-    _LOGGER.info("[Microlife Core] Full 20-sensor pipeline integrated into HA Core successfully.")
+    _LOGGER.info("[Microlife Core] Full 26-sensor pipeline integrated into HA Core successfully.")
     return True
 
 
@@ -202,6 +297,7 @@ class MicrolifeHistorySensor(RestoreEntity, SensorEntity):
         self._attr_name = name
         self._attr_native_unit_of_measurement = "records"
         self._attr_device_info = device_info
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_native_value = 0
         self._attr_extra_state_attributes = {"records": []}
 
@@ -258,4 +354,50 @@ class MicrolifeFlagSensor(
 
     def update_state(self, value):
         self._attr_native_value = bool(value)
+        self.async_write_ha_state()
+
+class MicrolifeDeviceInfoSensor(
+    RestoreEntity,
+    SensorEntity,
+):
+    """BLE device information sensor."""
+
+    def __init__(
+        self,
+        mac,
+        key,
+        name,
+        device_info,
+        device_meta,
+    ):
+        self._key = key
+        self._device_meta = device_meta
+
+        self._attr_unique_id = (
+            f"microlife_{mac}_{key}"
+        )
+
+        self._attr_name = name
+        self._attr_device_info = device_info
+        self._attr_entity_category = (
+            EntityCategory.DIAGNOSTIC
+        )
+        async def async_added_to_hass(self):
+            await super().async_added_to_hass()
+
+            if (state := await self.async_get_last_state()) is None:
+                return
+
+            if state.state in ("unknown", "unavailable", None):
+                return
+
+            self._device_meta[self._key] = state.state
+            
+    @property
+    def native_value(self):
+        return self._device_meta.get(
+            self._key
+        )
+
+    def refresh(self):
         self.async_write_ha_state()

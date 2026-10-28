@@ -26,8 +26,8 @@ def get_microlife_device_info(mac: str, device_type: str = "blood_pressure") -> 
     
     return DeviceInfo(
         identifiers={(DOMAIN, clean_mac)},
-        name=device_name,
         manufacturer="Microlife",
+        name=device_name,
         model=model_name,
         connections={(CONNECTION_BLUETOOTH, clean_mac)}
     )

@@ -324,7 +324,7 @@ class MicrolifeOptionsFlowHandler(
     """Microlife options flow."""
 
     def __init__(self, config_entry):
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(
         self,
@@ -345,9 +345,9 @@ class MicrolifeOptionsFlowHandler(
                 {
                     vol.Required(
                         "profile1_name",
-                        default=self.config_entry.options.get(
+                        default=self._config_entry.options.get(
                             "profile1_name",
-                            self.config_entry.data.get(
+                            self._config_entry.data.get(
                                 "profile1_name",
                                 "Profile 1",
                             ),
@@ -356,9 +356,9 @@ class MicrolifeOptionsFlowHandler(
 
                     vol.Required(
                         "profile2_name",
-                        default=self.config_entry.options.get(
+                        default=self._config_entry.options.get(
                             "profile2_name",
-                            self.config_entry.data.get(
+                            self._config_entry.data.get(
                                 "profile2_name",
                                 "Profile 2",
                             ),

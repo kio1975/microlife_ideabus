@@ -4,15 +4,18 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import async_ble_device_from_address
-
+from homeassistant.helpers import device_registry as dr
 from .const import (
     DOMAIN, 
-    WRITE_UUID, 
+    WRITE_UUID,
+    build_write_device_time_command,
     build_microlife_command,
     CHAR_MANUFACTURER,
     CHAR_MODEL,
     CHAR_SERIAL,
-    UUID_FIRMWARE
+    CHAR_FIRMWARE,
+    CHAR_HARDWARE,
+    CHAR_SOFTWARE
 )
 from .ble_stream import request_history_buffered 
 from .parsers.matrix_parser import parse_ideabus_matrix
@@ -105,6 +108,20 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
         {}
     )
 
+    device_meta = entry_context.setdefault(
+        "device_meta",
+        {}
+    )
+
+    device_meta["rssi"] = getattr(
+        service_info,
+        "rssi",
+        None,
+    )
+    _LOGGER.warning(
+        "RSSI DEBUG = %s",
+        getattr(service_info, "rssi", None),
+    )    
     ble_error_stats = entry_context.setdefault(
         "ble_error_stats",
         {
@@ -191,13 +208,70 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
             # Warm up GATT descriptors to initialize the encrypted link state
             _LOGGER.debug("[Microlife Worker] Warming up GATT descriptors and restoring security keys...")
             try:
-                descriptors_pool = [CHAR_MANUFACTURER, CHAR_MODEL, CHAR_SERIAL, UUID_FIRMWARE]
+                descriptors_pool = [CHAR_MANUFACTURER, CHAR_MODEL, CHAR_SERIAL, CHAR_FIRMWARE, CHAR_HARDWARE, CHAR_SOFTWARE]
+                device_meta = entry_context.setdefault("device_meta", {},)
                 for char_uuid in descriptors_pool:
                     if not client.is_connected:
                         break
                     raw_info = await client.read_gatt_char(char_uuid)
+                    value = raw_info.decode(
+                        errors="ignore"
+                    ).strip()
+
+                    if char_uuid == CHAR_MANUFACTURER:
+                        device_meta["manufacturer"] = value
+
+                    elif char_uuid == CHAR_MODEL:
+                        device_meta["model"] = value
+
+                    elif char_uuid == CHAR_SERIAL:
+                        device_meta["serial"] = value
+
+                    elif char_uuid == CHAR_FIRMWARE:
+                        device_meta["firmware"] = value
+
+                    elif char_uuid == CHAR_HARDWARE:
+                        device_meta["hardware"] = value
+
+                    elif char_uuid == CHAR_SOFTWARE:
+                        device_meta["software"] = value
+                        
+                    for sensor in entry_context.get(
+                        "device_info_sensors",
+                        {},
+                    ).values():
+                        sensor.async_write_ha_state()
+                        
                     _LOGGER.debug("[Microlife Info Sync] Descriptor %s read successful: %s", char_uuid[:8], raw_info.decode(errors="ignore").strip())
                     await asyncio.sleep(0.1)
+                try:
+                    device_registry = dr.async_get(hass)
+
+                    device = device_registry.async_get_device(
+                        identifiers={
+                            (DOMAIN, mac.upper())
+                        }
+                    )
+
+                    if device:
+                        device_registry.async_update_device(
+                            device.id,
+                            serial_number=device_meta.get(
+                                "serial"
+                            ),
+                            sw_version=device_meta.get(
+                                "firmware"
+                            ),
+                            hw_version=device_meta.get(
+                                "hardware"
+                            ),
+                        )
+                except Exception as err:
+                    _LOGGER.debug(
+                        "[Microlife Device Registry] "
+                        "Update failed: %s",
+                        err,
+                    )
             except Exception as sync_err:
                 _LOGGER.debug("[Microlife Worker] Non-critical info sync bypass: %s", sync_err)
 
@@ -233,7 +307,21 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
                 return
 
             _LOGGER.info("[Microlife Worker] Downloading flash memory matrix via secured channel...")
-            
+            sync_cmd = build_write_device_time_command(device_type)
+
+            _LOGGER.debug(
+                "[Microlife Worker] Syncing device time: %s",
+                sync_cmd.hex().upper(),
+            )
+
+            await client.write_gatt_char(
+                WRITE_UUID,
+                sync_cmd,
+                response=True,
+            )
+
+            await asyncio.sleep(0.5)
+
             async with asyncio.timeout(30.0):
                 if device_type == "wbo_scale":
                     cmd = build_microlife_command("wbo_scale", 1)

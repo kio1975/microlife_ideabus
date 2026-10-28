@@ -52,51 +52,75 @@ class MicrolifePairingHelper:
         self,
         timeout: float = 60.0,
     ) -> bool:
+        """Detect passkey immediately without waiting for newline."""
 
-        while True:
+        pattern = re.compile(
+            r"Confirm passkey (\d+)"
+        )
+
+        buffer = ""
+
+        deadline = (
+            asyncio.get_running_loop().time()
+            + timeout
+        )
+
+        while (
+            asyncio.get_running_loop().time()
+            < deadline
+        ):
 
             try:
-                raw = await asyncio.wait_for(
-                    self._pairing_task.stdout.readline(),
-                    timeout=timeout,
+                chunk = await asyncio.wait_for(
+                    self._pairing_task.stdout.read(128),
+                    timeout=1.0,
                 )
+
             except TimeoutError:
-                _LOGGER.error(
-                    "[Microlife Helper] Passkey timeout."
-                )
+                continue
+
+            if not chunk:
                 return False
 
-            if not raw:
-                return False
-
-            text = raw.decode(
+            text = chunk.decode(
                 errors="ignore"
-            ).strip()
+            )
+
+            buffer += text
 
             _LOGGER.debug(
                 "[Microlife Helper RAW] %r",
                 text,
             )
 
-            match = re.search(
-                r"Confirm passkey (\d+)",
-                text,
+            match = pattern.search(
+                buffer
             )
 
             if match:
-                detected_passkey = match.group(1)
+                self.passkey = match.group(1)
 
-                if self.passkey != detected_passkey:
-                    self.passkey = detected_passkey
+                _LOGGER.info(
+                    "[Microlife Helper] Passkey detected: %s",
+                    self.passkey,
+                )
 
-                    _LOGGER.info(
-                        "[Microlife Helper] Passkey detected: %s",
-                        self.passkey,
-                    )
                 return True
 
-            if "Failed to pair" in text:
+            if (
+                "Failed to pair" in buffer
+                or "AuthenticationCanceled" in buffer
+            ):
                 return False
+
+            if len(buffer) > 4096:
+                buffer = buffer[-2048:]
+
+        _LOGGER.error(
+            "[Microlife Helper] Passkey timeout."
+        )
+
+        return False    
     async def wait_for_pairing_success(self, timeout: float = 60.0) -> bool:
         """Wait for bluetoothctl to report successful pairing."""
 
