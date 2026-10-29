@@ -76,8 +76,8 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
             return
 
         # ИСПРАВЛЕНО: Безопасное извлечение очереди из глобального хранилища hass.data
-        entry_context = hass.data.get(DOMAIN, {}).get(target_entry.entry_id)
-        if not entry_context or "cmd_queue" not in entry_context:
+        entry_context = target_entry.runtime_data
+        if not entry_context:
             _LOGGER.error("Active execution queue context missing for MAC %s", mac)
             return
 
@@ -86,7 +86,7 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
         time_payload = bytearray([0x4D, 0x3A, 0x00, 0x0F, 0x0D, year_short, now.month, now.day, now.hour, now.minute, now.second])
         time_payload.append(calc_checksum_1byte(time_payload))
         
-        entry_context["cmd_queue"].append(bytes(time_payload))
+        entry_context.cmd_queue.append(bytes(time_payload))
         _LOGGER.info("[Microlife] Time synchronization frame pushed into session execution queue for %s", mac)
 
     async def handle_clear_history(call: ServiceCall):
@@ -106,15 +106,15 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
             return
 
         # ИСПРАВЛЕНО: Извлечение очереди из глобального хранилища hass.data
-        entry_context = hass.data.get(DOMAIN, {}).get(target_entry.entry_id)
-        if not entry_context or "cmd_queue" not in entry_context:
+        entry_context = target_entry.runtime_data
+        if not entry_context:
             _LOGGER.error("Active execution queue context missing for MAC %s", mac)
             return
 
         clear_payload = bytearray([0x4D, 0x3A, 0x00, 0x0A, 0x03, user_no])
         clear_payload.append(calc_checksum_1byte(clear_payload))
         
-        entry_context["cmd_queue"].append(bytes(clear_payload))
+        entry_context.cmd_queue.append(bytes(clear_payload))
         _LOGGER.warning("[Microlife] Memory wipe frame for profile %s pushed into queue for %s", user_key, mac)
 
     async def handle_export_history(call):

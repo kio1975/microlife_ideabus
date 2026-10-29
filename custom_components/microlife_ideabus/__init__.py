@@ -14,7 +14,18 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN, PLATFORMS
 from .services import register_microlife_services
 from .sensor_worker import connect_and_fetch_worker
+from .frontend import async_register_panel
+from dataclasses import dataclass, field
 
+@dataclass
+class MicrolifeRuntimeData:
+    sensors: dict = field(default_factory=dict)
+    cmd_queue: list = field(default_factory=list)
+    is_connecting: bool = False
+    device_meta: dict = field(default_factory=dict)
+    ble_error_stats: dict = field(default_factory=dict)
+    device_info_sensors: dict = field(default_factory=dict)
+    
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -28,28 +39,23 @@ async def async_setup_entry(
         "Initializing Microlife Ideabus integration for device: %s",
         entry.title,
     )
-
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
 
-    hass.data[DOMAIN][entry.entry_id] = {
-        "sensors": {},
-        "cmd_queue": [],
-        "is_connecting": False,
-    }
+    current_context = MicrolifeRuntimeData()
 
-    current_context = hass.data[DOMAIN][entry.entry_id]
+    entry.runtime_data = current_context
 
     if not hass.data[DOMAIN].get("services_registered"):
         register_microlife_services(
             hass,
-            current_context["sensors"],
+            current_context.sensors,
         )
         hass.data[DOMAIN]["services_registered"] = True
 
     mac_address = entry.data["mac"].upper().strip()
     device_type = entry.data["device_type"]
-
+    
     def _bluetooth_advertisement_callback(
         service_info: BluetoothServiceInfoBleak,
     ) -> None:
@@ -142,15 +148,15 @@ async def async_setup_entry(
             advertisement_address,
             getattr(service_info, "name", None),
             getattr(service_info, "rssi", None),
-            current_context.get("is_connecting", False),
+            current_context.is_connecting,
         )
         _LOGGER.debug(
             "[CONNECT LOCK BEFORE] %s",
-            current_context.get("is_connecting"),
+            current_context.is_connecting,
         )
         # Current BLE session or cooldown period is still active.
         # The flag is cleared in sensor_worker.py after 20 seconds.
-        if current_context.get("is_connecting", False):
+        if current_context.is_connecting:
             _LOGGER.debug(
                 "[DISCOVERY] B6 ADV ignored because "
                 "is_connecting=True"
@@ -164,7 +170,7 @@ async def async_setup_entry(
 
         # Set connection lock before starting the task.
         # This prevents multiple workers from running simultaneously.
-        current_context["is_connecting"] = True
+        current_context.is_connecting = True
         _LOGGER.debug(
             "[CONNECT LOCK SET TRUE] ts=%s",
             time.monotonic(),
@@ -189,7 +195,7 @@ async def async_setup_entry(
                 connect_and_fetch_worker(
                     hass,
                     entry,
-                    current_context["sensors"],
+                    current_context.sensors,
                     mac_address,
                     device_type,
                     service_info,
@@ -209,13 +215,13 @@ async def async_setup_entry(
         entry,
         PLATFORMS,
     )
-    current_context["is_connecting"] = True
+    current_context.is_connecting = True
 
     asyncio.create_task(
         connect_and_fetch_worker(
             hass,
             entry,
-            current_context["sensors"],
+            current_context.sensors,
             mac_address,
             device_type,
             None,
@@ -236,7 +242,8 @@ async def async_setup_entry(
         time.monotonic(),
         mac_address,
     )
-    
+
+    await async_register_panel(hass)
     return True
 
 

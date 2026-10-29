@@ -1,10 +1,15 @@
 """Bluetooth connection and telemetry download worker engine for Microlife."""
+
+from __future__ import annotations
+
 import asyncio
 import logging
+from datetime import datetime
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import (CONNECTION_BLUETOOTH,)
 from .const import (
     DOMAIN, 
     WRITE_UUID,
@@ -23,6 +28,7 @@ from .ui_dispatch import (
     update_bpm_user1, update_bpm_user2, update_scale_sensors,
     update_oximeter_sensors, update_thermo_sensors
 )
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +71,7 @@ def classify_ble_error(err: Exception) -> str:
 
     return "unknown"
 
-async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac: str, device_type: str, service_info, state_lock: dict):
+async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac: str, device_type: str, service_info, state_lock: MicrolifeRuntimeData):
     """End-to-end communication session worker optimized for multi-device matrix architecture."""
     _LOGGER.debug(
         "[WORKER ENTER] "
@@ -74,7 +80,7 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
         "is_connecting=%s",
         mac,
         device_type,
-        state_lock.get("is_connecting"),
+        state_lock.is_connecting,
     )
     ble_device = async_ble_device_from_address(
         hass,
@@ -100,49 +106,27 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
         "[BLE DEVICE DETAILS] %r",
         ble_device,
     )    
-    entry_context = hass.data.setdefault(
-        DOMAIN,
-        {}
-    ).setdefault(
-        entry.entry_id,
-        {}
-    )
+    entry_context = entry.runtime_data
 
-    device_meta = entry_context.setdefault(
-        "device_meta",
-        {}
-    )
+    device_meta = entry_context.device_meta
 
     device_meta["rssi"] = getattr(
         service_info,
         "rssi",
         None,
     )
-    _LOGGER.warning(
+    _LOGGER.debug(
         "RSSI DEBUG = %s",
         getattr(service_info, "rssi", None),
     )    
-    ble_error_stats = entry_context.setdefault(
-        "ble_error_stats",
-        {
-            "authentication_failed": 0,
-            "service_discovery_failed": 0,
-            "connection_canceled": 0,
-            "not_connected": 0,
-            "stack_busy": 0,
-            "connect_failed": 0,
-            "device_disconnected": 0,
-            "timeout": 0,
-            "unknown": 0,
-        },
-    )
+    ble_error_stats = entry_context.ble_error_stats
 
     if not ble_device:
         _LOGGER.error(
             "[WORKER EXIT] DEVICE NOT FOUND IN CACHE"
         )
 
-        state_lock["is_connecting"] = False
+        state_lock.is_connecting = False
 
         _LOGGER.error(
             "[CONNECT LOCK SET FALSE] DEVICE NOT FOUND"
@@ -209,7 +193,7 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
             _LOGGER.debug("[Microlife Worker] Warming up GATT descriptors and restoring security keys...")
             try:
                 descriptors_pool = [CHAR_MANUFACTURER, CHAR_MODEL, CHAR_SERIAL, CHAR_FIRMWARE, CHAR_HARDWARE, CHAR_SOFTWARE]
-                device_meta = entry_context.setdefault("device_meta", {},)
+                device_meta = entry_context.device_meta
                 for char_uuid in descriptors_pool:
                     if not client.is_connected:
                         break
@@ -236,10 +220,7 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
                     elif char_uuid == CHAR_SOFTWARE:
                         device_meta["software"] = value
                         
-                    for sensor in entry_context.get(
-                        "device_info_sensors",
-                        {},
-                    ).values():
+                    for sensor in entry_context.device_info_sensors.values():
                         sensor.async_write_ha_state()
                         
                     _LOGGER.debug("[Microlife Info Sync] Descriptor %s read successful: %s", char_uuid[:8], raw_info.decode(errors="ignore").strip())
@@ -247,25 +228,42 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
                 try:
                     device_registry = dr.async_get(hass)
 
-                    device = device_registry.async_get_device(
-                        identifiers={
-                            (DOMAIN, mac.upper())
-                        }
+                    device = device_registry.async_get_device_by_identifier(
+                        (DOMAIN, mac.upper()),
+                        entry.entry_id,
                     )
-
+                    _LOGGER.debug(
+                        "DEVICE LOOKUP RESULT = %s",
+                        device,
+                    )
                     if device:
+                        fw_version = device_meta.get("firmware")
+
+                        try:
+                                fw_version = datetime.strptime(
+                                        fw_version,
+                                        "%H:%M:%S %b %d %Y"
+                                ).strftime("%d.%m.%Y")
+                        except Exception:
+                                pass
+                        _LOGGER.debug(
+                                "FW CONVERTED: %s -> %s",
+                                device_meta.get("firmware"),
+                                fw_version,
+                        )
                         device_registry.async_update_device(
                             device.id,
-                            serial_number=device_meta.get(
-                                "serial"
-                            ),
-                            sw_version=device_meta.get(
-                                "firmware"
-                            ),
-                            hw_version=device_meta.get(
-                                "hardware"
-                            ),
+                            serial_number=device_meta.get("serial"),
+                            sw_version=device_meta.get("software"),
+                            hw_version=device_meta.get("hardware"),
                         )
+                        _LOGGER.debug(
+                            "META firmware=%s hardware=%s software=%s serial=%s",
+                            device_meta.get("firmware"),
+                            device_meta.get("hardware"),
+                            device_meta.get("software"),
+                            device_meta.get("serial"),
+                        )                        
                 except Exception as err:
                     _LOGGER.debug(
                         "[Microlife Device Registry] "
@@ -287,9 +285,8 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
                 return
             
             # Process queued service commands
-            entry_context = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-            queue = entry_context.get("cmd_queue", [])
-            
+            queue = entry.runtime_data.cmd_queue
+                        
             while queue:
                 if not client.is_connected:
                     break
@@ -439,12 +436,12 @@ async def connect_and_fetch_worker(hass, entry: ConfigEntry, sensors: dict, mac:
         _LOGGER.debug("[COOLDOWN START]")
         await asyncio.sleep(20.0)
         _LOGGER.debug("[COOLDOWN END]")
-        state_lock["is_connecting"] = False
+        state_lock.is_connecting = False
         _LOGGER.debug(
             "[CONNECT LOCK SET FALSE]"
         )
 
         _LOGGER.debug(
             "[CONNECT LOCK VALUE] %s",
-            state_lock.get("is_connecting"),
+            state_lock.is_connecting,
         )

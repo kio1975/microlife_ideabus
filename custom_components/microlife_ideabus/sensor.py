@@ -21,24 +21,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     _LOGGER.info("[Microlife Core] Initializing sensor platform for MAC: %s", mac_address)
     
-    entry_context = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    entry_context = entry.runtime_data
     if not entry_context:
         _LOGGER.error("[Microlife Core] Integration context missing from hass.data during sensor setup!")
         return False
-    device_meta = entry_context.setdefault(
-        "device_meta",
-        {}
-    )
+    device_meta = entry_context.device_meta
+
     # Device association is now performed exclusively through the Bluetooth identifier.
     device_info = get_microlife_device_info(
         mac_address,
         device_type,
     )
 
-    device_meta = entry_context.setdefault(
-        "device_meta",
-        {}
-    )
+    device_meta = entry_context.device_meta
 
     manufacturer_sensor = MicrolifeDeviceInfoSensor(
         mac_address,
@@ -165,9 +160,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         
 
     # Publish the sensor map to the integration runtime context for use by the background worker
-    entry_context["sensors"].clear()
-    entry_context["sensors"].update(sensors_map)
-    entry_context["device_info_sensors"] = {
+    entry_context.sensors.clear()
+    entry_context.sensors.update(sensors_map)
+    entry_context.device_info_sensors = {
         "rssi": rssi_sensor,
         "manufacturer": manufacturer_sensor,
         "model": model_sensor,
@@ -379,20 +374,22 @@ class MicrolifeDeviceInfoSensor(
 
         self._attr_name = name
         self._attr_device_info = device_info
+        if key == "rssi":
+            self._attr_native_unit_of_measurement = "dBm"    
         self._attr_entity_category = (
             EntityCategory.DIAGNOSTIC
         )
-        async def async_added_to_hass(self):
-            await super().async_added_to_hass()
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
 
-            if (state := await self.async_get_last_state()) is None:
-                return
+        if (state := await self.async_get_last_state()) is None:
+            return
 
-            if state.state in ("unknown", "unavailable", None):
-                return
+        if state.state in ("unknown", "unavailable", None):
+            return
 
-            self._device_meta[self._key] = state.state
-            
+        self._device_meta[self._key] = state.state
+        
     @property
     def native_value(self):
         return self._device_meta.get(

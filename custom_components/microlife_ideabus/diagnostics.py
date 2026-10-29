@@ -28,13 +28,7 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
 
-    runtime = hass.data.get(
-        DOMAIN,
-        {},
-    ).get(
-        entry.entry_id,
-        {},
-    )
+    runtime = entry.runtime_data
 
     diagnostics_data = {
         "entry": {
@@ -49,21 +43,9 @@ async def async_get_config_entry_diagnostics(
             ),
         },
         "runtime": {
-            "is_connecting": runtime.get(
-                "is_connecting",
-            ),
-            "sensor_count": len(
-                runtime.get(
-                    "sensors",
-                    {},
-                ),
-            ),
-            "cmd_queue_size": len(
-                runtime.get(
-                    "cmd_queue",
-                    [],
-                ),
-            ),
+            "is_connecting": runtime.is_connecting,
+            "sensor_count": len(runtime.sensors),
+            "cmd_queue_size": len(runtime.cmd_queue),
         },
     }
 
