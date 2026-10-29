@@ -23,7 +23,7 @@ SERVICE_REPAIR_SCHEMA = vol.Schema({
     vol.Required("mac"): cv.string,
 })
 
-def register_microlife_services(hass: HomeAssistant, sensors: dict):
+def register_microlife_services(hass: HomeAssistant):
     """Register custom services for handling medical archives."""
 
     async def handle_tag_measurement(call):
@@ -56,9 +56,14 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
         await hass.async_add_executor_job(update_mapping_sync)
         _LOGGER.info("[Microlife] Record from %s on device %s forced to user: %s", target_time, mac, new_tag)
 
-        for group in sensors.values():
-            for entity in group.values():
-                if getattr(entity, "_mac", "") == mac:
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.data.get("mac", "").upper() != mac:
+                continue
+
+            runtime = entry.runtime_data
+
+            for group in runtime.sensors.values():
+                for entity in group.values():
                     entity.async_write_ha_state()
 
     async def handle_sync_time(call: ServiceCall):
@@ -133,10 +138,17 @@ def register_microlife_services(hass: HomeAssistant, sensors: dict):
             return
             
         all_measurements = []
-        for u_data in sensors.values():
-            if "history" in u_data:
-                all_measurements.extend(u_data["history"].extra_state_attributes.get("measurements", []))
-                
+
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            runtime = entry.runtime_data
+
+            for u_data in runtime.sensors.values():
+                if "history" in u_data:
+                    all_measurements.extend(
+                        u_data["history"]
+                        .extra_state_attributes
+                        .get("measurements", [])
+                    )
         filtered = []
         for m in all_measurements:
             m_tag = m.get("user_tag", "unknown").lower()

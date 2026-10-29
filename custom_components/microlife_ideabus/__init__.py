@@ -47,10 +47,7 @@ async def async_setup_entry(
     entry.runtime_data = current_context
 
     if not hass.data[DOMAIN].get("services_registered"):
-        register_microlife_services(
-            hass,
-            current_context.sensors,
-        )
+        register_microlife_services(hass)
         hass.data[DOMAIN]["services_registered"] = True
 
     mac_address = entry.data["mac"].upper().strip()
@@ -263,25 +260,32 @@ async def async_unload_entry(
     )
 
     if unload_ok:
-        for service in [
-            "tag_measurement",
-            "export_history",
-            "sync_time",
-            "clear_history",
-            "repair_bluetooth",
-        ]:
-            if hass.services.has_service(
-                DOMAIN,
-                service,
-            ):
-                hass.services.async_remove(
+        remaining_entries = [
+            e
+            for e in hass.config_entries.async_entries(DOMAIN)
+            if e.entry_id != entry.entry_id
+        ]
+
+        if not remaining_entries:
+            for service in [
+                "tag_measurement",
+                "export_history",
+                "sync_time",
+                "clear_history",
+                "repair_bluetooth",
+            ]:
+                if hass.services.has_service(
                     DOMAIN,
                     service,
-                )
+                ):
+                    hass.services.async_remove(
+                        DOMAIN,
+                        service,
+                    )
 
-        hass.data.get(DOMAIN, {}).pop(
-            entry.entry_id,
-            None,
-        )
+            hass.data.pop(
+                DOMAIN,
+                None,
+            )
 
     return unload_ok
